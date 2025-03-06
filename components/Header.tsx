@@ -1,10 +1,42 @@
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native'
-import React from 'react'
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Alert } from 'react-native'
+import React, { useState } from 'react'
 import { MaterialIcons, Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { BlurView } from 'expo-blur'
 
-export default function Header() {
+interface HeaderProps {
+  onSignOut?: () => void;
+}
+
+export default function Header({ onSignOut }: HeaderProps) {
+  const [showProfileMenu, setShowProfileMenu] = useState(false)
+
+  const handleProfilePress = () => {
+    if (showProfileMenu) {
+      setShowProfileMenu(false)
+    } else {
+      setShowProfileMenu(true)
+    }
+  }
+
+  const handleSignOut = () => {
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Sign Out',
+          onPress: onSignOut,
+          style: 'destructive',
+        },
+      ]
+    )
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.topSection}>
@@ -32,7 +64,10 @@ export default function Header() {
           </TouchableOpacity>
 
           {/* Profile */}
-          <TouchableOpacity style={styles.profileButton}>
+          <TouchableOpacity 
+            style={styles.profileButton}
+            onPress={handleProfilePress}
+          >
             <LinearGradient
               colors={['#4CAF50', '#2196F3']}
               style={styles.profileGradient}
@@ -42,6 +77,19 @@ export default function Header() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Profile Menu */}
+      {showProfileMenu && (
+        <View style={styles.profileMenu}>
+          <TouchableOpacity 
+            style={styles.menuItem}
+            onPress={handleSignOut}
+          >
+            <MaterialIcons name="logout" size={20} color="#FF5722" />
+            <Text style={styles.menuItemText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Search Bar */}
       <TouchableOpacity style={styles.searchBar}>
@@ -140,5 +188,33 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
     flex: 1,
+  },
+  profileMenu: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 100 : 66,
+    right: 16,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 150,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 12,
+  },
+  menuItemText: {
+    color: '#FF5722',
+    fontSize: 16,
+    fontWeight: '500',
   },
 })

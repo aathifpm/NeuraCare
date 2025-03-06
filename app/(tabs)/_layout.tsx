@@ -11,15 +11,13 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#4CAF50',
-        tabBarInactiveTintColor: '#888',
         headerShown: false,
         tabBarStyle: {
           backgroundColor: '#121212',
-          borderTopWidth: 0,
-          paddingBottom: Platform.OS === 'ios' ? 20 : 8,
-          height: Platform.OS === 'ios' ? 85 : 65,
+          borderTopColor: '#2A2A2A',
         },
+        tabBarActiveTintColor: '#4CAF50',
+        tabBarInactiveTintColor: '#666',
       }}
     >
       {/* Home Tab */}
@@ -27,12 +25,8 @@ export default function TabLayout() {
         name='index'
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons
-              name={focused ? 'home' : 'home'}
-              size={25}
-              color={color}
-            />
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons name="home" size={size} color={color} />
           ),
           tabBarAccessibilityLabel: 'Home Tab',
         }}
@@ -43,12 +37,8 @@ export default function TabLayout() {
         name='chat'
         options={{
           title: 'Chat',
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons
-              name={focused ? 'chat' : 'chat-bubble-outline'}
-              size={25}
-              color={color}
-            />
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="robot" size={size} color={color} />
           ),
           tabBarAccessibilityLabel: 'Health Chat',
         }}
@@ -59,12 +49,8 @@ export default function TabLayout() {
         name='track'
         options={{
           title: 'Track',
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons
-              name={focused ? 'track-changes' : 'track-changes'}
-              size={25}
-              color={color}
-            />
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons name="track-changes" size={size} color={color} />
           ),
           tabBarAccessibilityLabel: 'Health Tracking',
         }}
@@ -75,12 +61,8 @@ export default function TabLayout() {
         name='reminders'
         options={{
           title: 'Reminders',
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons
-              name={focused ? 'notifications' : 'notifications-none'}
-              size={25}
-              color={color}
-            />
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons name="notifications" size={size} color={color} />
           ),
           tabBarAccessibilityLabel: 'Medication Reminders',
         }}
@@ -91,12 +73,8 @@ export default function TabLayout() {
         name='profile'
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons
-              name={focused ? 'person' : 'person-outline'}
-              size={25}
-              color={color}
-            />
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons name="person" size={size} color={color} />
           ),
           tabBarAccessibilityLabel: 'Profile',
         }}

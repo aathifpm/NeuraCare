@@ -16,6 +16,9 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { BlurView } from 'expo-blur'
 import Header from '@/components/Header'
 import { router } from 'expo-router'
+import { auth, db } from '../config/firebase'
+import { doc, getDoc, onSnapshot, DocumentData } from 'firebase/firestore'
+import { onAuthStateChanged, User } from 'firebase/auth'
 
 const { width } = Dimensions.get('window')
 
@@ -28,6 +31,14 @@ type VitalData = {
   goal?: number
   type: 'number' | 'string'
 }
+
+interface UserProfile extends DocumentData {
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  createdAt: number;
+}
+
 type UserData = {
   name: string
   healthScore: number
@@ -42,39 +53,75 @@ type UserData = {
   }>
 }
 
-// Mock data
-const mockUserData: UserData = {
-  name: 'Aathif',
-  healthScore: 92,
+// Default user data
+const defaultUserData: UserData = {
+  name: '',
+  healthScore: 0,
   vitals: {
-    heartRate: { value: 72, unit: 'BPM', status: 'Normal', type: 'number' },
-    steps: { value: 8547, unit: 'steps', status: 'On Track', goal: 10000, type: 'number' },
-    sleep: { value: '7h 30m', unit: 'hours', status: 'Good', type: 'string' },
-    water: { value: 1.8, unit: 'L', status: 'Need More', goal: 2.5, type: 'number' },
+    heartRate: { value: 0, unit: 'BPM', status: 'Normal', type: 'number' },
+    steps: { value: 0, unit: 'steps', status: 'On Track', goal: 10000, type: 'number' },
+    sleep: { value: '0h 0m', unit: 'hours', status: 'Good', type: 'string' },
+    water: { value: 0, unit: 'L', status: 'Need More', goal: 2.5, type: 'number' },
   },
-  upcoming: [
-    {
-      id: 1,
-      type: 'medication',
-      title: 'Vitamin D3',
-      time: 'Today, 2:00 PM',
-      icon: 'pill',
-      color: '#4CAF50',
-    },
-    {
-      id: 2,
-      type: 'appointment',
-      title: 'Doctor Appointment',
-      time: 'Tomorrow, 10:00 AM',
-      icon: 'calendar',
-      color: '#9C27B0',
-    },
-  ],
+  upcoming: [],
 }
 
 export default function Index() {
-  const [userData, setUserData] = useState(mockUserData)
+  const [userData, setUserData] = useState<UserData>(defaultUserData)
   const [greeting, setGreeting] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+
+  // Check authentication and fetch user data
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        router.replace('/LoginScreen')
+        return
+      }
+
+      setCurrentUser(user)
+
+      try {
+        // Fetch user profile from Firestore
+        const userDocRef = doc(db, 'users', user.uid)
+        const unsubscribeSnapshot = onSnapshot(userDocRef, (docSnapshot) => {
+          if (docSnapshot.exists()) {
+            const profileData = docSnapshot.data() as UserProfile
+            setUserData(currentData => ({
+              ...currentData,
+              name: profileData.fullName || '',
+            }))
+          }
+        })
+
+        // Fetch user health data
+        const healthDocRef = doc(db, 'health_data', user.uid)
+        const healthSnapshot = await getDoc(healthDocRef)
+        
+        if (healthSnapshot.exists()) {
+          const healthData = healthSnapshot.data()
+          setUserData(currentData => ({
+            ...currentData,
+            vitals: healthData.vitals || currentData.vitals,
+            upcoming: healthData.upcoming || [],
+          }))
+        }
+
+        setLoading(false)
+        return () => {
+          unsubscribeSnapshot()
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error)
+        setLoading(false)
+      }
+    })
+
+    return () => {
+      unsubscribeAuth()
+    }
+  }, [])
 
   // Calculate greeting based on time of day
   useEffect(() => {
@@ -83,6 +130,16 @@ export default function Index() {
     else if (hour < 18) setGreeting('Good afternoon')
     else setGreeting('Good evening')
   }, [])
+
+  // Handle sign out
+  const handleSignOut = async () => {
+    try {
+      await auth.signOut()
+      router.replace('/LoginScreen')
+    } catch (error) {
+      Alert.alert('Error', 'Failed to sign out. Please try again.')
+    }
+  }
 
   // Handle quick action navigation
   const handleQuickAction = (action: string) => {
@@ -178,9 +235,17 @@ export default function Index() {
     return Math.round(score)
   }
 
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    )
+  }
+
   return (
     <View style={styles.container}>
-      <Header />
+      <Header onSignOut={handleSignOut} />
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Welcome Section with Health Score */}
           <LinearGradient
@@ -542,5 +607,13 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#fff',
+    fontSize: 16,
   },
 })

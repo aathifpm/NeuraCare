@@ -1,25 +1,18 @@
-import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
-} from '@react-navigation/native'
+import { useEffect } from 'react';
+import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font'
-import { Stack } from 'expo-router'
-import * as SplashScreen from 'expo-splash-screen'
-import { StatusBar } from 'expo-status-bar'
-import { useEffect, useState } from 'react'
-import 'react-native-reanimated'
+import { useRouter } from 'expo-router';
+import { onAuthStateChanged } from 'firebase/auth';
+import { useState } from 'react'
+import { View, Text } from 'react-native';
+import firebase from './config/firebase';
 import { useColorScheme } from '@/hooks/useColorScheme'
 
-import * as SecureStore from 'expo-secure-store'
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync()
-
 export default function RootLayout() {
+  const router = useRouter();
   const colorScheme = useColorScheme()
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null);
 
   // const [loaded] = useFonts({
   //   SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
@@ -29,38 +22,51 @@ export default function RootLayout() {
   })
 
   useEffect(() => {
-    // Check for authentication token
-    async function checkAuth() {
-      try {
-        const token = await SecureStore.getItemAsync('userToken')
-        setIsAuthenticated(!!token) // Set isAuthenticated based on token presence
-      } catch (e) {
-        console.error(e)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    checkAuth()
-  }, [])
+    try {
+      const unsubscribe = onAuthStateChanged(firebase.auth, (user) => {
+        setIsLoading(false);
+        if (!user) {
+          router.replace('/LoginScreen');
+        } else {
+          router.replace('/(tabs)');
+        }
+      }, (error) => {
+        console.error('Auth state change error:', error);
+        setError(error.message);
+        setIsLoading(false);
+      });
 
-  useEffect(() => {
-    if (loaded && !isLoading) {
-      SplashScreen.hideAsync()
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('Firebase initialization error:', error);
+      setError(error instanceof Error ? error.message : 'An error occurred');
+      setIsLoading(false);
     }
-  }, [loaded, isLoading])
+  }, []);
 
   if (!loaded || isLoading) {
-    return null
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#121212' }}>
+        <Text style={{ color: '#fff' }}>Loading...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#121212' }}>
+        <Text style={{ color: '#ff4444', textAlign: 'center', padding: 20 }}>
+          {error}
+        </Text>
+      </View>
+    );
   }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack initialRouteName={isAuthenticated ? '(tabs)' : 'LoginScreen'}>
-        <Stack.Screen name='LoginScreen' options={{ headerShown: false }} />
-        <Stack.Screen name='(tabs)' options={{ headerShown: false }} />
-        <Stack.Screen name='SignupScreen' options={{ headerShown: false }} />
-      </Stack>
-      <StatusBar style='auto' />
-    </ThemeProvider>
-  )
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="LoginScreen" options={{ headerShown: false }} />
+      <Stack.Screen name="SignupScreen" options={{ headerShown: false }} />
+    </Stack>
+  );
 }

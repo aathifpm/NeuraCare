@@ -8,14 +8,63 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Alert,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import GradientText from '../components/GradientText'
+import { signUp, createDocument, handleFirebaseError } from './services/firebase'
+import type { BaseDocument } from './services/firebase'
+
+interface UserProfile extends BaseDocument {
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  createdAt: number;
+}
 
 export default function SignupScreen() {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [phoneNumber, setPhoneNumber] = useState('')
+
+  const handleSignup = async () => {
+    if (!email || !password || !fullName || !phoneNumber) {
+      Alert.alert('Error', 'Please fill in all fields')
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      // Create user authentication
+      const userCredential = await signUp(email, password)
+      
+      // Create user profile in Firestore
+      const userProfile: UserProfile = {
+        fullName,
+        email,
+        phoneNumber,
+        createdAt: Date.now(),
+      }
+      
+      await createDocument<UserProfile>('users', userCredential.user.uid, userProfile)
+      
+      Alert.alert('Success', 'Account created successfully!', [
+        {
+          text: 'OK',
+          onPress: () => router.push('/LoginScreen'),
+        },
+      ])
+    } catch (error) {
+      const errorMessage = handleFirebaseError(error)
+      Alert.alert('Error', errorMessage)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   return (
     <KeyboardAvoidingView
@@ -52,14 +101,10 @@ export default function SignupScreen() {
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
-            placeholder='Your Mobile Number'
-            placeholderTextColor='#666'
-            keyboardType='phone-pad'
-          />
-          <TextInput
-            style={styles.input}
             placeholder='Your Full Name'
             placeholderTextColor='#666'
+            value={fullName}
+            onChangeText={setFullName}
           />
           <TextInput
             style={styles.input}
@@ -67,6 +112,24 @@ export default function SignupScreen() {
             placeholderTextColor='#666'
             keyboardType='email-address'
             autoCapitalize='none'
+            value={email}
+            onChangeText={setEmail}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder='Your Password'
+            placeholderTextColor='#666'
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder='Your Mobile Number'
+            placeholderTextColor='#666'
+            keyboardType='phone-pad'
+            value={phoneNumber}
+            onChangeText={setPhoneNumber}
           />
         </View>
 
@@ -81,13 +144,17 @@ export default function SignupScreen() {
               styles.continueButton,
               isLoading && styles.continueButtonDisabled,
             ]}
+            onPress={handleSignup}
+            disabled={isLoading}
           >
-            <Text style={styles.continueText}>CONTINUE</Text>
+            <Text style={styles.continueText}>
+              {isLoading ? 'CREATING ACCOUNT...' : 'CONTINUE'}
+            </Text>
           </TouchableOpacity>
         </LinearGradient>
 
         <Text style={styles.verifyText}>
-          We will send an otp to your mobile number to verify.
+          We will verify your email address.
         </Text>
 
         <View style={styles.loginContainer}>

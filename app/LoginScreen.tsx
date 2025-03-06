@@ -14,31 +14,29 @@ import {
 import { useRouter } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import GradientText from '../components/GradientText'
+import { signIn, handleFirebaseError } from './services/firebase'
 
 const { width } = Dimensions.get('window')
 
 export default function LoginScreen() {
   const router = useRouter()
-  const [mobileNumber, setMobileNumber] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
   const handleLogin = async () => {
-    if (!mobileNumber || !password) {
+    if (!email || !password) {
       Alert.alert('Error', 'Please fill in all fields')
       return
     }
 
     setIsLoading(true)
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      if (mobileNumber === '1234567890' && password === 'password') {
-        router.replace('/(tabs)')
-      } else {
-        Alert.alert('Error', 'Invalid credentials')
-      }
+      await signIn(email, password)
+      router.replace('/(tabs)')
     } catch (error) {
-      Alert.alert('Error', 'Something went wrong. Please try again.')
+      const errorMessage = handleFirebaseError(error)
+      Alert.alert('Error', errorMessage)
     } finally {
       setIsLoading(false)
     }
@@ -84,11 +82,12 @@ export default function LoginScreen() {
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
-            placeholder='Your Mobile Number'
+            placeholder='Your Email'
             placeholderTextColor='#666'
-            keyboardType='phone-pad'
-            value={mobileNumber}
-            onChangeText={setMobileNumber}
+            keyboardType='email-address'
+            autoCapitalize='none'
+            value={email}
+            onChangeText={setEmail}
           />
           <TextInput
             style={styles.input}
