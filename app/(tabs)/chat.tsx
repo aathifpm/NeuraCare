@@ -13,8 +13,12 @@ import {
   Image,
   Animated,
   Keyboard,
+  Easing,
+  Modal,
+  Dimensions,
+  Linking,
 } from 'react-native'
-import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons'
+import { MaterialIcons, MaterialCommunityIcons, Ionicons, Feather, AntDesign, FontAwesome } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { auth, db } from '../config/firebase'
 import {
@@ -29,17 +33,21 @@ import {
   orderBy,
   limit,
   onSnapshot,
+  deleteDoc,
+  writeBatch,
+  updateDoc,
 } from 'firebase/firestore'
 import { onAuthStateChanged } from 'firebase/auth'
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
+import Markdown from 'react-native-markdown-display'
 
 const { GoogleGenerativeAI } = require("@google/generative-ai")
 
 // Get API key from environment variables or use a fallback for development
 const GEMINI_API_KEY = Constants.expoConfig?.extra?.geminiApiKey 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" })
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
 
 // Types
 interface ChatMessage {
@@ -98,6 +106,15 @@ interface HealthMetric {
   notes?: string;
 }
 
+// Interface for chat session
+interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: Timestamp;
+  lastUpdated: Timestamp;
+  messages: ChatMessage[];
+}
+
 // Initial system prompt to make the AI act as a health assistant
 const HEALTH_SYSTEM_PROMPT = `You are a virtual health assistant named Neuracare AI. Your role is to:
 1. Provide general health advice and information
@@ -123,6 +140,47 @@ const INITIAL_MESSAGE: ChatMessage = {
   timestamp: Timestamp.now(),
 }
 
+// Helper function to format message text with markdown
+const formatMessageText = (text: string): string => {
+  // Add proper markdown formatting to lists
+  let formattedText = text.replace(/^(\d+)\.\s/gm, '$1. ');
+  formattedText = formattedText.replace(/^[-*]\s/gm, '- ');
+  
+  // Enhance headers
+  formattedText = formattedText.replace(/^(#+)\s/gm, '$1 ');
+  
+  // Format bold text that might not be properly formatted
+  formattedText = formattedText.replace(/\*\*([^*]+)\*\*/g, '**$1**');
+  formattedText = formattedText.replace(/__(.*?)__/g, '**$1**');
+  
+  // Format italics
+  formattedText = formattedText.replace(/\*([^*]+)\*/g, '*$1*');
+  formattedText = formattedText.replace(/_([^_]+)_/g, '*$1*');
+  
+  return formattedText;
+};
+
+// Helper function to enhance AI response with markdown
+const enhanceResponseWithMarkdown = (text: string): string => {
+  let enhancedText = text;
+  
+  // Add headers to sections that look like headers
+  enhancedText = enhancedText.replace(/^(Benefits|Symptoms|Treatment|Prevention|Causes|Risk Factors|Diagnosis|Management|Tips|Advice|Recommendations|Summary|Overview|Conclusion):/gm, '## $1:');
+  
+  // Add emphasis to important warnings
+  enhancedText = enhancedText.replace(/(Note:|Warning:|Important:|Caution:|Disclaimer:)([^.!?]*[.!?])/g, '**$1**$2');
+  
+  // Format lists better
+  enhancedText = enhancedText.replace(/^(\d+)\.\s+/gm, '$1. ');
+  enhancedText = enhancedText.replace(/^[-*]\s+/gm, '- ');
+  
+  // Add blockquotes to disclaimers and important notes
+  const disclaimerRegex = /(Disclaimer:|Please note:|Remember:|Important to remember:)([^.!?]*[.!?])/g;
+  enhancedText = enhancedText.replace(disclaimerRegex, '> **$1**$2');
+  
+  return enhancedText;
+};
+
 export default function ChatScreen() {
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -133,8 +191,18 @@ export default function ChatScreen() {
   const [isInitializing, setIsInitializing] = useState(true)
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions] = useState(true)
+  
+  // New state for sidebar and sessions
+  const [sidebarVisible, setSidebarVisible] = useState(false)
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  
   const scrollViewRef = useRef<ScrollView>(null)
   const fadeAnim = useRef(new Animated.Value(1)).current
+  const dot1Opacity = useRef(new Animated.Value(0.3)).current
+  const dot2Opacity = useRef(new Animated.Value(0.3)).current
+  const dot3Opacity = useRef(new Animated.Value(0.3)).current
+  const sidebarAnim = useRef(new Animated.Value(-280)).current
 
   // Check authentication and load user data
   useEffect(() => {
@@ -145,15 +213,21 @@ export default function ChatScreen() {
       }
       
       setUserId(user.uid)
+      
+      try {
       await Promise.all([
         loadUserProfile(user.uid),
         loadHealthData(user.uid),
-        loadChatHistory(user.uid)
+          loadChatSessions(user.uid),
       ])
+      } catch (error) {
+        console.error('Error loading user data:', error)
+      } finally {
       setIsInitializing(false)
+      }
     })
     
-    return () => unsubscribe()
+    return unsubscribe
   }, [])
 
   // Set up keyboard listeners to hide suggestions when keyboard appears
@@ -226,40 +300,245 @@ export default function ChatScreen() {
     }
   }
 
-  // Load chat history from Firestore
-  const loadChatHistory = async (uid: string) => {
+  // Load chat sessions from Firestore
+  const loadChatSessions = async (uid: string) => {
     try {
-      const chatRef = collection(db, 'chats', uid, 'messages')
-      const q = query(chatRef, orderBy('timestamp', 'asc'), limit(50))
+      const sessionsRef = collection(db, 'users', uid, 'chatSessions')
+      const q = query(sessionsRef, orderBy('lastUpdated', 'desc'))
       
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const messages: ChatMessage[] = []
-        snapshot.forEach((doc) => {
-          messages.push({ id: doc.id, ...doc.data() } as ChatMessage)
-        })
+      const unsubscribe = onSnapshot(q, async (snapshot) => {
+        const sessions: ChatSession[] = []
         
-        if (messages.length > 0) {
-          setChatHistory(messages)
+        for (const doc of snapshot.docs) {
+          const sessionData = doc.data() as Omit<ChatSession, 'messages'>
+          
+          // Load messages for this session
+          const messagesRef = collection(db, 'users', uid, 'chatSessions', doc.id, 'messages')
+          const messagesQuery = query(messagesRef, orderBy('timestamp', 'asc'))
+          const messagesSnapshot = await getDocs(messagesQuery)
+          
+          const messages: ChatMessage[] = messagesSnapshot.docs.map(msgDoc => ({
+            id: msgDoc.id,
+            ...msgDoc.data()
+          } as ChatMessage))
+          
+          sessions.push({
+            id: doc.id,
+            title: sessionData.title,
+            createdAt: sessionData.createdAt,
+            lastUpdated: sessionData.lastUpdated,
+            messages: messages.length > 0 ? messages : [INITIAL_MESSAGE]
+          })
+        }
+        
+        setChatSessions(sessions)
+        
+        // If no sessions exist, create a default one
+        if (sessions.length === 0) {
+          createNewSession()
+        } else if (!currentSessionId || !sessions.find(s => s.id === currentSessionId)) {
+          // Set the most recent session as current
+          setCurrentSessionId(sessions[0].id)
+          setChatHistory(sessions[0].messages)
         }
       })
       
       return unsubscribe
     } catch (error) {
-      console.error('Error loading chat history:', error)
+      console.error('Error loading chat sessions:', error)
       return () => {}
     }
   }
 
-  // Save message to Firestore
-  const saveMessage = async (message: Omit<ChatMessage, 'id'>) => {
+  // Create a new chat session
+  const createNewSession = async () => {
     if (!userId) return
     
     try {
-      const chatRef = collection(db, 'chats', userId, 'messages')
-      await addDoc(chatRef, message)
+      const newSession: Omit<ChatSession, 'id' | 'messages'> = {
+        title: 'New Chat',
+        createdAt: Timestamp.now(),
+        lastUpdated: Timestamp.now(),
+      }
+      
+      const sessionsRef = collection(db, 'users', userId, 'chatSessions')
+      const docRef = await addDoc(sessionsRef, newSession)
+      
+      // Save initial message
+      const messagesRef = collection(db, 'users', userId, 'chatSessions', docRef.id, 'messages')
+      await addDoc(messagesRef, INITIAL_MESSAGE)
+      
+      // Switch to the new session
+      setCurrentSessionId(docRef.id)
+      setChatHistory([INITIAL_MESSAGE])
+      
+      // Close sidebar after creating new chat
+      toggleSidebar()
+    } catch (error) {
+      console.error('Error creating new session:', error)
+    }
+  }
+
+  // Delete a chat session
+  const deleteSession = async (sessionId: string) => {
+    if (!userId) return
+    
+    Alert.alert(
+      'Delete Chat',
+      'Are you sure you want to delete this chat? This cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delete the session document
+              await deleteDoc(doc(db, 'users', userId, 'chatSessions', sessionId))
+              
+              // If we deleted the current session, switch to another one
+              if (sessionId === currentSessionId) {
+                const remainingSessions = chatSessions.filter(s => s.id !== sessionId)
+                if (remainingSessions.length > 0) {
+                  setCurrentSessionId(remainingSessions[0].id)
+                  setChatHistory(remainingSessions[0].messages)
+                } else {
+                  // If no sessions left, create a new one
+                  createNewSession()
+                }
+              }
+            } catch (error) {
+              console.error('Error deleting session:', error)
+            }
+          },
+        },
+      ]
+    )
+  }
+
+  // Switch to a different chat session
+  const switchSession = (sessionId: string) => {
+    const session = chatSessions.find(s => s.id === sessionId)
+    if (session) {
+      setCurrentSessionId(sessionId)
+      setChatHistory(session.messages)
+      toggleSidebar()
+    }
+  }
+
+  // Update session title
+  const updateSessionTitle = async (sessionId: string, firstMessage: string) => {
+    if (!userId) return
+    
+    try {
+      // Generate a title based on the first user message
+      let title = firstMessage.substring(0, 20)
+      if (firstMessage.length > 20) title += '...'
+      
+      await updateDoc(doc(db, 'users', userId, 'chatSessions', sessionId), {
+        title,
+        lastUpdated: Timestamp.now()
+      })
+    } catch (error) {
+      console.error('Error updating session title:', error)
+    }
+  }
+
+  // Toggle sidebar visibility
+  const toggleSidebar = () => {
+    if (sidebarVisible) {
+      // Hide sidebar
+      Animated.timing(sidebarAnim, {
+        toValue: -280,
+        duration: 300,
+        useNativeDriver: true,
+        easing: Easing.ease
+      }).start(() => setSidebarVisible(false))
+    } else {
+      // Show sidebar
+      setSidebarVisible(true)
+      Animated.timing(sidebarAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+        easing: Easing.ease
+      }).start()
+    }
+  }
+
+  // Save message to current session
+  const saveMessage = async (message: Omit<ChatMessage, 'id'>) => {
+    if (!userId || !currentSessionId) return
+    
+    try {
+      const messagesRef = collection(db, 'users', userId, 'chatSessions', currentSessionId, 'messages')
+      const docRef = await addDoc(messagesRef, message)
+      
+      // Update session's lastUpdated timestamp
+      await updateDoc(doc(db, 'users', userId, 'chatSessions', currentSessionId), {
+        lastUpdated: Timestamp.now()
+      })
+      
+      // If this is the first user message, update the session title
+      if (message.type === 'user' && chatHistory.length <= 1) {
+        updateSessionTitle(currentSessionId, message.message)
+      }
+      
+      return docRef.id
     } catch (error) {
       console.error('Error saving message:', error)
     }
+  }
+
+  // Clear current chat history
+  const clearHistory = async () => {
+    if (!userId || !currentSessionId) return
+    
+    Alert.alert(
+      'Clear Chat History',
+      'Are you sure you want to clear this chat? This cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delete all messages in the current session
+              const messagesRef = collection(db, 'users', userId, 'chatSessions', currentSessionId, 'messages')
+              const messagesSnapshot = await getDocs(messagesRef)
+              
+              const batch = writeBatch(db)
+              messagesSnapshot.docs.forEach(doc => {
+                batch.delete(doc.ref)
+              })
+              
+              await batch.commit()
+              
+              // Add initial message back
+              await addDoc(messagesRef, INITIAL_MESSAGE)
+              
+              // Update local state
+              setChatHistory([INITIAL_MESSAGE])
+              
+              // Update session title and timestamp
+              await updateDoc(doc(db, 'users', userId, 'chatSessions', currentSessionId), {
+                title: 'New Chat',
+                lastUpdated: Timestamp.now()
+              })
+            } catch (error) {
+              console.error('Error clearing chat history:', error)
+            }
+          },
+        },
+      ]
+    )
   }
 
   // Generate health-specific suggested questions
@@ -286,22 +565,42 @@ export default function ChatScreen() {
     return questions.slice(0, 4) // Limit to 4 suggestions
   }
 
-  // Send message to AI and get response
+  // Modified sendMessage function to work with sessions
   const sendMessage = async (text: string = message) => {
-    if (!text.trim() || !userId) return
+    if (!text.trim() || isLoading) return
     
+    setIsLoading(true)
+    setMessage('')
+    Keyboard.dismiss()
+    
+    // Hide suggestions after sending a message
+    if (showSuggestions) {
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => {
+        setShowSuggestions(false)
+      })
+    }
+    
+    // Add user message to chat
     const userMessage: Omit<ChatMessage, 'id'> = {
       type: 'user',
-      message: text.trim(),
+      message: text,
       timestamp: Timestamp.now(),
     }
     
-    // Save user message to Firestore
-    await saveMessage(userMessage)
+    // Save to Firestore and get the ID
+    const userMessageId = await saveMessage(userMessage)
     
-    // Clear input field
-    setMessage('')
-    setIsLoading(true)
+    // Update local state
+    setChatHistory(prev => [...prev, { ...userMessage, id: userMessageId || Date.now().toString() }])
+    
+    // Scroll to bottom
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true })
+    }, 100)
 
     try {
       // Prepare health context for the AI
@@ -356,31 +655,34 @@ export default function ChatScreen() {
       const result = await model.generateContent(prompt)
       const response = await result.response.text()
 
+      // Enhance the response with better markdown formatting
+      const enhancedResponse = enhanceResponseWithMarkdown(response)
+
       // Check if response contains medication or treatment recommendations
-      const isRecommendation = containsRecommendation(response)
+      const isRecommendation = containsRecommendation(enhancedResponse)
 
       const aiResponse: Omit<ChatMessage, 'id'> = {
         type: 'assistant',
-        message: response,
+        message: enhancedResponse,
         timestamp: Timestamp.now(),
         isRecommendation,
       }
 
       // Save AI response to Firestore
-      await saveMessage(aiResponse)
+      const aiMessageId = await saveMessage(aiResponse)
 
+      // Update local state
+      setChatHistory(prev => [...prev, { ...aiResponse, id: aiMessageId || Date.now().toString() }])
     } catch (error) {
-      console.error('Error getting AI response:', error)
-      
-      const errorMessage: Omit<ChatMessage, 'id'> = {
-        type: 'assistant',
-        message: 'I apologize, but I encountered an error. Please try again or rephrase your question. Remember, for any urgent medical concerns, please contact a healthcare professional.',
-        timestamp: Timestamp.now(),
-      }
-      
-      await saveMessage(errorMessage)
+      console.error('Error sending message:', error)
+      Alert.alert('Error', 'Failed to get a response. Please try again.')
     } finally {
       setIsLoading(false)
+      
+      // Scroll to bottom
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true })
+      }, 100)
     }
   }
 
@@ -397,47 +699,71 @@ export default function ChatScreen() {
     )
   }
 
-  // Clear chat history
-  const clearHistory = async () => {
-    if (!userId) return
+  // Animation function for typing indicator
+  const animateTypingIndicator = () => {
+    // Reset values
+    dot1Opacity.setValue(0.3);
+    dot2Opacity.setValue(0.3);
+    dot3Opacity.setValue(0.3);
     
-    Alert.alert(
-      'Clear Chat History',
-      'Are you sure you want to clear all chat history? This cannot be undone.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // In a real app, you would delete all documents from the collection
-              // For now, we'll just reset the local state
-              setChatHistory([INITIAL_MESSAGE])
-              
-              // Save initial message to Firestore
-              await saveMessage(INITIAL_MESSAGE)
-            } catch (error) {
-              console.error('Error clearing chat history:', error)
-            }
-          },
-        },
-      ]
-    )
-  }
-
-  // Handle suggested question tap
-  const handleSuggestionTap = (question: string) => {
-    sendMessage(question)
-  }
+    // Create sequence of animations
+    Animated.loop(
+      Animated.sequence([
+        // First dot
+        Animated.timing(dot1Opacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+          easing: Easing.ease
+        }),
+        // Second dot
+        Animated.timing(dot2Opacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+          easing: Easing.ease
+        }),
+        // Third dot
+        Animated.timing(dot3Opacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+          easing: Easing.ease
+        }),
+        // Reset all dots
+        Animated.timing(dot1Opacity, {
+          toValue: 0.3,
+          duration: 300,
+          useNativeDriver: true,
+          easing: Easing.ease
+        }),
+        Animated.timing(dot2Opacity, {
+          toValue: 0.3,
+          duration: 300,
+          useNativeDriver: true,
+          easing: Easing.ease
+        }),
+        Animated.timing(dot3Opacity, {
+          toValue: 0.3,
+          duration: 300,
+          useNativeDriver: true,
+          easing: Easing.ease
+        })
+      ])
+    ).start();
+  };
+  
+  // Start animation when loading state changes
+  useEffect(() => {
+    if (isLoading) {
+      animateTypingIndicator();
+    }
+  }, [isLoading]);
 
   if (isInitializing) {
     return (
       <View style={[styles.container, styles.centerContent]}>
-        <ActivityIndicator size="large" color="#4CAF50" />
+        <ActivityIndicator size="large" color="#00BFFF" />
         <Text style={styles.loadingText}>Loading your health assistant...</Text>
       </View>
     )
@@ -445,25 +771,93 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={['#4CAF50', '#2196F3']}
-        style={styles.header}
-      >
-        <View style={styles.headerContent}>
-          <View style={styles.headerTitleContainer}>
-            <MaterialCommunityIcons name="robot-happy" size={24} color="#fff" />
-            <Text style={styles.headerTitle}>Neuracare AI</Text>
-          </View>
-          <TouchableOpacity onPress={clearHistory} style={styles.clearButton}>
-            <MaterialIcons name="delete-outline" size={24} color="#fff" />
+      {/* Sidebar Overlay */}
+      {sidebarVisible && (
+        <TouchableOpacity 
+          style={styles.overlay} 
+          activeOpacity={1} 
+          onPress={toggleSidebar}
+        />
+      )}
+      
+      {/* Sidebar */}
+      <Animated.View style={[
+        styles.sidebar,
+        { transform: [{ translateX: sidebarAnim }] }
+      ]}>
+        <View style={styles.sidebarHeader}>
+          <Text style={styles.sidebarTitle}>Chat History</Text>
+          <TouchableOpacity 
+            style={styles.newChatButton}
+            onPress={createNewSession}
+          >
+            <AntDesign name="plus" size={20} color="#fff" />
+            <Text style={styles.newChatText}>New Chat</Text>
           </TouchableOpacity>
         </View>
-        {userProfile && (
-          <Text style={styles.welcomeText}>
-            Hello, {userProfile.fullName.split(' ')[0]}! How can I help you today?
-          </Text>
-        )}
-      </LinearGradient>
+        
+        <ScrollView style={styles.sessionsList}>
+          {chatSessions.map(session => (
+            <TouchableOpacity
+              key={session.id}
+              style={[
+                styles.sessionItem,
+                currentSessionId === session.id && styles.activeSessionItem
+              ]}
+              onPress={() => switchSession(session.id)}
+            >
+              <View style={styles.sessionInfo}>
+                <MaterialIcons 
+                  name="chat-bubble-outline" 
+                  size={20} 
+                  color={currentSessionId === session.id ? "#00BFFF" : "#888"} 
+                />
+                <Text 
+                  style={[
+                    styles.sessionTitle,
+                    currentSessionId === session.id && styles.activeSessionTitle
+                  ]}
+                  numberOfLines={1}
+                >
+                  {session.title}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => deleteSession(session.id)}
+              >
+                <MaterialIcons name="delete-outline" size={20} color="#888" />
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </Animated.View>
+      
+      <View style={styles.headerWrapper}>
+        <LinearGradient
+          colors={['#00BFFF', '#1E90FF', '#4169E1']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerBorder}
+        />
+        <View style={[styles.header, { paddingVertical:8 }]}>
+          <View style={styles.headerContent}>
+            <TouchableOpacity 
+              style={styles.menuButton}
+              onPress={toggleSidebar}
+            >
+              <Feather name="menu" size={24} color="#00BFFF" />
+            </TouchableOpacity>
+            <View style={styles.headerTitleContainer}>
+              <MaterialCommunityIcons name="robot-happy" size={24} color="#00BFFF" />
+              <Text style={styles.headerTitle}>Neuracare AI</Text>
+            </View>
+            <TouchableOpacity onPress={clearHistory} style={styles.clearButton}>
+              <MaterialIcons name="delete-outline" size={24} color="#00BFFF" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
 
       <ScrollView 
         style={styles.chatContainer}
@@ -488,7 +882,41 @@ export default function ChatScreen() {
                   <Text style={styles.assistantName}>Neuracare AI</Text>
                 </View>
               )}
-              <Text style={styles.messageText}>{chat.message}</Text>
+              
+              {chat.type === 'user' ? (
+                <Text style={styles.messageText}>{chat.message}</Text>
+              ) : (
+                <Markdown
+                  style={markdownStyles}
+                  rules={{
+                    link: (node, children, parent, styles) => {
+                      return (
+                        <TouchableOpacity 
+                          key={node.key} 
+                          onPress={() => Linking.openURL(node.attributes.href)}
+                        >
+                          <Text style={markdownStyles.link}>
+                            {children}
+                          </Text>
+                        </TouchableOpacity>
+                      )
+                    },
+                    list_item: (node, children, parent, styles) => {
+                      return (
+                        <View key={node.key} style={markdownStyles.listItemContainer}>
+                          <Text style={markdownStyles.listItemBullet}>•</Text>
+                          <View style={markdownStyles.listItemContent}>
+                            {children}
+                          </View>
+                        </View>
+                      )
+                    },
+                  }}
+                >
+                  {formatMessageText(chat.message)}
+                </Markdown>
+              )}
+              
               {chat.isRecommendation && (
                 <View style={styles.recommendationBadge}>
                   <MaterialIcons name="medical-services" size={14} color="#fff" />
@@ -507,9 +935,9 @@ export default function ChatScreen() {
         {isLoading && (
           <View style={styles.loadingContainer}>
             <View style={styles.typingIndicator}>
-              <View style={styles.typingDot} />
-              <View style={[styles.typingDot, {animationDelay: '0.2s'}]} />
-              <View style={[styles.typingDot, {animationDelay: '0.4s'}]} />
+              <Animated.View style={[styles.typingDot, { opacity: dot1Opacity }]} />
+              <Animated.View style={[styles.typingDot, { opacity: dot2Opacity }]} />
+              <Animated.View style={[styles.typingDot, { opacity: dot3Opacity }]} />
             </View>
             <Text style={styles.typingText}>Neuracare AI is thinking...</Text>
           </View>
@@ -532,10 +960,16 @@ export default function ChatScreen() {
             {suggestedQuestions.map((question, index) => (
               <TouchableOpacity
                 key={index}
-                style={styles.suggestionButton}
-                onPress={() => handleSuggestionTap(question)}
+                onPress={() => sendMessage(question)}
+              >
+                <LinearGradient
+                  colors={['#00BFFF', '#1E90FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.suggestionButton}
               >
                 <Text style={styles.suggestionText}>{question}</Text>
+                </LinearGradient>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -556,11 +990,17 @@ export default function ChatScreen() {
           editable={!isLoading}
         />
         <TouchableOpacity
-          style={[styles.sendButton, isLoading && styles.disabledButton]}
           onPress={() => sendMessage()}
           disabled={isLoading}
         >
-          <MaterialIcons name="send" size={24} color={isLoading ? "#666" : "#4CAF50"} />
+          <LinearGradient
+            colors={['#00BFFF', '#1E90FF', '#4169E1']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.sendButton, isLoading && styles.disabledButton]}
+          >
+            <MaterialIcons name="send" size={24} color="#fff" />
+          </LinearGradient>
         </TouchableOpacity>
       </KeyboardAvoidingView>
     </View>
@@ -595,11 +1035,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  header: {
-    padding: 16,
-    paddingTop: Platform.OS === 'ios' ? 60 : 16,
+  headerWrapper: {
+    position: 'relative',
+    marginBottom: 8,
+    paddingTop: Platform.OS === 'ios' ? 44 : 0,
+  },
+  headerBorder: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
+    height: Platform.OS === 'ios' ? 100 : 80,
+    opacity: 0.2,
+  },
+  header: {
+    padding: 12,
+    paddingTop: Platform.OS === 'ios' ? 50 : 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#00BFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   headerContent: {
     flexDirection: 'row',
@@ -611,16 +1070,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
-    color: '#fff',
+    color: '#00BFFF',
     fontSize: 20,
     fontWeight: 'bold',
     marginLeft: 8,
   },
   welcomeText: {
-    color: '#fff',
-    fontSize: 16,
-    marginTop: 8,
-    opacity: 0.9,
+    color: '#00BFFF',
+    fontSize: 14,
+    marginTop: 4,
   },
   clearButton: {
     padding: 8,
@@ -630,8 +1088,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   messageContainer: {
-    maxWidth: '85%',
-    marginVertical: 4,
+    maxWidth: '80%',
     padding: 12,
     borderRadius: 16,
     elevation: 1,
@@ -642,12 +1099,16 @@ const styles = StyleSheet.create({
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#4CAF50',
+    backgroundColor: 'rgba(0, 191, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: '#00BFFF',
     borderTopRightRadius: 4,
   },
   assistantMessage: {
     alignSelf: 'flex-start',
-    backgroundColor: '#2A2A2A',
+    backgroundColor: 'rgba(30, 144, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: '#1E90FF',
     borderTopLeftRadius: 4,
   },
   assistantHeader: {
@@ -662,7 +1123,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   assistantName: {
-    color: '#4CAF50',
+    color: '#00BFFF',
     fontSize: 14,
     fontWeight: 'bold',
   },
@@ -689,7 +1150,7 @@ const styles = StyleSheet.create({
   recommendationBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FF5722',
+    backgroundColor: 'rgba(65, 105, 225, 0.8)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -720,12 +1181,13 @@ const styles = StyleSheet.create({
     marginRight: 8,
     color: '#fff',
     maxHeight: 100,
+    borderWidth: 1,
+    borderColor: '#00BFFF',
   },
   sendButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#2A2A2A',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -737,22 +1199,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    color: '#4CAF50',
+    color: '#00BFFF',
     fontSize: 16,
     marginTop: 12,
   },
   typingIndicator: {
     flexDirection: 'row',
-    backgroundColor: '#2A2A2A',
+    backgroundColor: 'rgba(30, 144, 255, 0.1)',
     padding: 12,
     borderRadius: 16,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#1E90FF',
   },
   typingDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#00BFFF',
     marginHorizontal: 2,
     opacity: 0.6,
   },
@@ -775,16 +1239,230 @@ const styles = StyleSheet.create({
     paddingRight: 16,
   },
   suggestionButton: {
-    backgroundColor: '#2A2A2A',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 16,
     marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#4CAF50',
   },
   suggestionText: {
     color: '#fff',
     fontSize: 14,
   },
-}) 
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    zIndex: 10,
+  },
+  sidebar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 280,
+    backgroundColor: '#1A1A1A',
+    zIndex: 20,
+    borderRightWidth: 1,
+    borderRightColor: '#333',
+    paddingTop: Platform.OS === 'ios' ? 50 : 20,
+  },
+  sidebarHeader: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  sidebarTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  newChatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#00BFFF',
+    padding: 12,
+    borderRadius: 8,
+    justifyContent: 'center',
+  },
+  newChatText: {
+    color: '#fff',
+    marginLeft: 8,
+    fontWeight: 'bold',
+  },
+  sessionsList: {
+    flex: 1,
+  },
+  sessionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  activeSessionItem: {
+    backgroundColor: 'rgba(0, 191, 255, 0.1)',
+    borderLeftWidth: 3,
+    borderLeftColor: '#00BFFF',
+  },
+  sessionInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  sessionTitle: {
+    color: '#888',
+    marginLeft: 12,
+    fontSize: 14,
+    flex: 1,
+  },
+  activeSessionTitle: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  deleteButton: {
+    padding: 8,
+  },
+  menuButton: {
+    padding: 8,
+    marginRight: 8,
+  },
+})
+
+// Add markdown styles at the end of the file
+const markdownStyles = StyleSheet.create({
+  body: {
+    color: '#fff',
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  heading1: {
+    color: '#00BFFF',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  heading2: {
+    color: '#00BFFF',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  heading3: {
+    color: '#00BFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  heading4: {
+    color: '#00BFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  heading5: {
+    color: '#00BFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginTop: 2,
+    marginBottom: 1,
+  },
+  heading6: {
+    color: '#00BFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 1,
+    marginBottom: 0.5,
+  },
+  hr: {
+    backgroundColor: '#333',
+    height: 1,
+    marginVertical: 12,
+  },
+  strong: {
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  em: {
+    fontStyle: 'italic',
+    color: '#fff',
+  },
+  link: {
+    color: '#00BFFF',
+    textDecorationLine: 'underline',
+  },
+  blockquote: {
+    backgroundColor: 'rgba(0, 191, 255, 0.1)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#00BFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginVertical: 8,
+  },
+  code_inline: {
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    color: '#00BFFF',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    padding: 4,
+    borderRadius: 4,
+  },
+  code_block: {
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    color: '#00BFFF',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    padding: 8,
+    borderRadius: 4,
+    marginVertical: 8,
+  },
+  list_item: {
+    flexDirection: 'row',
+    marginVertical: 2,
+  },
+  listItemContainer: {
+    flexDirection: 'row',
+    marginVertical: 2,
+    alignItems: 'flex-start',
+  },
+  listItemBullet: {
+    color: '#00BFFF',
+    marginRight: 8,
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  listItemContent: {
+    flex: 1,
+  },
+  ordered_list: {
+    marginVertical: 8,
+  },
+  bullet_list: {
+    marginVertical: 8,
+  },
+  table: {
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 4,
+    marginVertical: 8,
+  },
+  thead: {
+    backgroundColor: 'rgba(0, 191, 255, 0.1)',
+  },
+  th: {
+    padding: 8,
+    fontWeight: 'bold',
+    color: '#00BFFF',
+  },
+  td: {
+    padding: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+}); 
