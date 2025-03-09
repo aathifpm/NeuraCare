@@ -21,13 +21,13 @@ import {
 import { MaterialIcons, MaterialCommunityIcons, Ionicons, Feather, AntDesign, FontAwesome } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { auth, db } from '../config/firebase'
-import {
+import { 
   doc,
   getDoc,
-  collection,
-  query,
-  where,
-  getDocs,
+  collection, 
+  query, 
+  where, 
+  getDocs, 
   Timestamp,
   addDoc,
   orderBy,
@@ -288,12 +288,15 @@ export default function ChatScreen() {
   // Load health data from Firestore
   const loadHealthData = async (uid: string) => {
     try {
-      const healthDocRef = doc(db, 'healthData', uid)
+      const healthDocRef = doc(db, 'health_data', uid)
       const healthDoc = await getDoc(healthDocRef)
       
       if (healthDoc.exists()) {
         const data = healthDoc.data() as HealthData
+        
         setHealthData(data)
+      } else {
+        
       }
     } catch (error) {
       console.error('Error loading health data:', error)
@@ -323,24 +326,24 @@ export default function ChatScreen() {
           } as ChatMessage))
           
           sessions.push({
-            id: doc.id,
+        id: doc.id,
             title: sessionData.title,
             createdAt: sessionData.createdAt,
             lastUpdated: sessionData.lastUpdated,
             messages: messages.length > 0 ? messages : [INITIAL_MESSAGE]
           })
         }
-        
-        setChatSessions(sessions)
-        
+      
+      setChatSessions(sessions)
+      
         // If no sessions exist, create a default one
         if (sessions.length === 0) {
-          createNewSession()
+        createNewSession()
         } else if (!currentSessionId || !sessions.find(s => s.id === currentSessionId)) {
           // Set the most recent session as current
           setCurrentSessionId(sessions[0].id)
           setChatHistory(sessions[0].messages)
-        }
+      }
       })
       
       return unsubscribe
@@ -606,6 +609,7 @@ export default function ChatScreen() {
       // Prepare health context for the AI
       let healthContext = "User health information:\n"
       
+      // Add user profile data if available
       if (userProfile) {
         healthContext += `Name: ${userProfile.fullName}\n`
         if (userProfile.gender) healthContext += `Gender: ${userProfile.gender}\n`
@@ -621,27 +625,84 @@ export default function ChatScreen() {
         if (userProfile.conditions && userProfile.conditions.length > 0) {
           healthContext += `Medical Conditions: ${userProfile.conditions.join(', ')}\n`
         }
+        
+        // Add emergency contact if available
+        if (userProfile.emergencyContact) {
+          healthContext += `Emergency Contact: ${userProfile.emergencyContact.name} (${userProfile.emergencyContact.relationship}) - ${userProfile.emergencyContact.phoneNumber}\n`
+        }
       }
       
+      // Add health data if available - log to verify it's being included
+      
+      
       if (healthData) {
-        healthContext += "Recent Vital Signs:\n"
+        healthContext += "\nRecent Vital Signs:\n"
         
-        if (healthData.vitals.heartRate) {
-          healthContext += `Heart Rate: ${healthData.vitals.heartRate.value} ${healthData.vitals.heartRate.unit} (${healthData.vitals.heartRate.status})\n`
+        // Dynamically add all vitals from the health data
+        if (healthData.vitals) {
+          Object.entries(healthData.vitals).forEach(([key, vital]) => {
+            if (vital && vital.value !== undefined) {
+              healthContext += `${key.charAt(0).toUpperCase() + key.slice(1)}: ${vital.value} ${vital.unit || ''}`
+              if (vital.status) healthContext += ` (${vital.status})`
+              if (vital.goal) healthContext += ` - Goal: ${vital.goal} ${vital.unit || ''}`
+              healthContext += '\n'
+            }
+          });
         }
         
-        if (healthData.vitals.bloodPressure) {
-          healthContext += `Blood Pressure: ${healthData.vitals.bloodPressure.value} ${healthData.vitals.bloodPressure.unit} (${healthData.vitals.bloodPressure.status})\n`
+        // Add all metrics dynamically from the metrics array
+        if (healthData.metrics && healthData.metrics.length > 0) {
+          healthContext += "\nAdditional Health Metrics:\n"
+          
+          // Group metrics by type for better organization
+          const metricsByType = healthData.metrics.reduce((acc, metric) => {
+            if (!acc[metric.type]) {
+              acc[metric.type] = [];
+            }
+            acc[metric.type].push(metric);
+            return acc;
+          }, {} as Record<string, HealthMetric[]>);
+          
+          // For each type, show the most recent metric
+          Object.entries(metricsByType).forEach(([type, metrics]) => {
+            // Sort by timestamp to get the most recent
+            const sortedMetrics = metrics.sort((a, b) => 
+              b.timestamp.seconds - a.timestamp.seconds
+            );
+            
+            const mostRecent = sortedMetrics[0];
+            healthContext += `${type}: ${mostRecent.value} ${mostRecent.unit}`;
+            
+            // Add notes if available
+            if (mostRecent.notes) {
+              healthContext += ` (Note: ${mostRecent.notes})`;
+            }
+            
+            healthContext += '\n';
+            
+            // If there's a trend, mention it
+            if (sortedMetrics.length > 1) {
+              const previousValue = sortedMetrics[1].value;
+              const change = mostRecent.value - previousValue;
+              const direction = change > 0 ? "increased" : change < 0 ? "decreased" : "unchanged";
+              
+              healthContext += `  - ${direction} by ${Math.abs(change)} ${mostRecent.unit} since last measurement\n`;
+            }
+          });
         }
         
-        if (healthData.vitals.temperature) {
-          healthContext += `Temperature: ${healthData.vitals.temperature.value} ${healthData.vitals.temperature.unit} (${healthData.vitals.temperature.status})\n`
+        // Add last updated timestamp
+        if (healthData.lastUpdated) {
+          const lastUpdatedDate = healthData.lastUpdated.toDate();
+          healthContext += `\nHealth data last updated: ${lastUpdatedDate.toLocaleDateString()} ${lastUpdatedDate.toLocaleTimeString()}\n`;
         }
-        
-        if (healthData.vitals.oxygenLevel) {
-          healthContext += `Oxygen Level: ${healthData.vitals.oxygenLevel.value} ${healthData.vitals.oxygenLevel.unit} (${healthData.vitals.oxygenLevel.status})\n`
-        }
+      } else {
+        healthContext += "\nNo health data available for this user.\n";
+        console.warn('No health data available when preparing prompt');
       }
+      
+      // Log the complete health context to verify it's being included
+      
 
       // Prepare conversation context
       const recentMessages = chatHistory
@@ -651,6 +712,9 @@ export default function ChatScreen() {
 
       // Combine system prompt, health context, conversation context, and user message
       const prompt = `${HEALTH_SYSTEM_PROMPT}\n\n${healthContext}\n\nRecent conversation:\n${recentMessages}\n\nUser: ${text.trim()}\n\nAssistant:`
+
+      // Log the complete prompt to verify all components are included
+      
 
       const result = await model.generateContent(prompt)
       const response = await result.response.text()
@@ -773,9 +837,9 @@ export default function ChatScreen() {
     <View style={styles.container}>
       {/* Sidebar Overlay */}
       {sidebarVisible && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.overlay} 
-          activeOpacity={1} 
+          activeOpacity={1}
           onPress={toggleSidebar}
         />
       )}
@@ -793,8 +857,8 @@ export default function ChatScreen() {
           >
             <AntDesign name="plus" size={20} color="#fff" />
             <Text style={styles.newChatText}>New Chat</Text>
-          </TouchableOpacity>
-        </View>
+            </TouchableOpacity>
+          </View>
         
         <ScrollView style={styles.sessionsList}>
           {chatSessions.map(session => (
@@ -832,7 +896,7 @@ export default function ChatScreen() {
           ))}
         </ScrollView>
       </Animated.View>
-      
+
       <View style={styles.headerWrapper}>
         <LinearGradient
           colors={['#00BFFF', '#1E90FF', '#4169E1']}
@@ -859,29 +923,29 @@ export default function ChatScreen() {
         </View>
       </View>
 
-      <ScrollView 
+        <ScrollView 
         style={styles.chatContainer}
-        ref={scrollViewRef}
-        onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({animated: true})}
-      >
+          ref={scrollViewRef}
+          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({animated: true})}
+        >
         {chatHistory.map(chat => (
-          <View key={chat.id}>
-            <View
-              style={[
+            <View key={chat.id}>
+              <View
+                style={[
                 styles.messageContainer,
                 chat.type === 'user' ? styles.userMessage : styles.assistantMessage,
-              ]}
-            >
-              {chat.type === 'assistant' && (
+                ]}
+              >
+                {chat.type === 'assistant' && (
                 <View style={styles.assistantHeader}>
-                  <Image 
-                    source={require('../../assets/images/ai-avatar.png')} 
+                    <Image 
+                      source={require('../../assets/images/ai-avatar.png')} 
                     style={styles.assistantAvatar}
-                    defaultSource={require('../../assets/images/ai-avatar.png')}
-                  />
+                      defaultSource={require('../../assets/images/ai-avatar.png')}
+                    />
                   <Text style={styles.assistantName}>Neuracare AI</Text>
-                </View>
-              )}
+                  </View>
+                )}
               
               {chat.type === 'user' ? (
                 <Text style={styles.messageText}>{chat.message}</Text>
@@ -917,32 +981,32 @@ export default function ChatScreen() {
                 </Markdown>
               )}
               
-              {chat.isRecommendation && (
+                {chat.isRecommendation && (
                 <View style={styles.recommendationBadge}>
-                  <MaterialIcons name="medical-services" size={14} color="#fff" />
+                    <MaterialIcons name="medical-services" size={14} color="#fff" />
                   <Text style={styles.recommendationText}>Health Recommendation</Text>
-                </View>
-              )}
-            </View>
-            <Text style={[
+                  </View>
+                )}
+              </View>
+              <Text style={[
               styles.timestamp,
               chat.type === 'user' ? styles.userTimestamp : styles.assistantTimestamp
-            ]}>
-              {formatTimestamp(chat.timestamp)}
-            </Text>
-          </View>
-        ))}
-        {isLoading && (
+              ]}>
+                {formatTimestamp(chat.timestamp)}
+              </Text>
+            </View>
+          ))}
+          {isLoading && (
           <View style={styles.loadingContainer}>
             <View style={styles.typingIndicator}>
               <Animated.View style={[styles.typingDot, { opacity: dot1Opacity }]} />
               <Animated.View style={[styles.typingDot, { opacity: dot2Opacity }]} />
               <Animated.View style={[styles.typingDot, { opacity: dot3Opacity }]} />
-            </View>
+              </View>
             <Text style={styles.typingText}>Neuracare AI is thinking...</Text>
-          </View>
-        )}
-      </ScrollView>
+            </View>
+          )}
+        </ScrollView>
 
       {showSuggestions && suggestedQuestions.length > 0 && (
         <Animated.View 
@@ -976,23 +1040,23 @@ export default function ChatScreen() {
         </Animated.View>
       )}
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.inputContainer}
-      >
-        <TextInput
-          style={styles.input}
-          value={message}
-          onChangeText={setMessage}
-          placeholder="Type your health question..."
-          placeholderTextColor="#888"
-          multiline
-          editable={!isLoading}
-        />
-        <TouchableOpacity
-          onPress={() => sendMessage()}
-          disabled={isLoading}
         >
+          <TextInput
+          style={styles.input}
+            value={message}
+            onChangeText={setMessage}
+            placeholder="Type your health question..."
+            placeholderTextColor="#888"
+            multiline
+            editable={!isLoading}
+          />
+          <TouchableOpacity
+          onPress={() => sendMessage()}
+            disabled={isLoading}
+          >
           <LinearGradient
             colors={['#00BFFF', '#1E90FF', '#4169E1']}
             start={{ x: 0, y: 0 }}
@@ -1001,8 +1065,8 @@ export default function ChatScreen() {
           >
             <MaterialIcons name="send" size={24} color="#fff" />
           </LinearGradient>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
     </View>
   )
 }

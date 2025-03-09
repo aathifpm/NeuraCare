@@ -1,6 +1,6 @@
 import { StyleSheet, Dimensions } from 'react-native'
 
-export const styles = StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#121212',
@@ -238,3 +238,5 @@ export const styles = StyleSheet.create({
     opacity: 0.5,
   },
 })
+
+export default styles
