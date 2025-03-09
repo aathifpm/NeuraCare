@@ -107,7 +107,7 @@ export default function Index() {
           const healthData = healthSnapshot.data()
           
           // Debug the data structure
-          console.log('Health data from Firestore:', JSON.stringify(healthData, null, 2))
+          
           
           // Check if vitals data exists
           if (!healthData.vitals) {
@@ -131,13 +131,13 @@ export default function Index() {
           // Process and set the user data with the updated vitals
           setUserData(currentData => {
             const newData = {
-              ...currentData,
+            ...currentData,
               vitals: mergedVitals,
-              upcoming: healthData.upcoming || [],
+            upcoming: healthData.upcoming || [],
             };
             
             // Debug the processed data
-            console.log('Processed user data:', JSON.stringify(newData, null, 2));
+            
             setDebugInfo(`Data processed: ${Object.keys(mergedVitals).length} vitals`);
             
             // Return the updated user data
@@ -254,7 +254,7 @@ export default function Index() {
       let hasChanges = false;
       
       // Debug the vital data
-      console.log('Current vitals before status update:', JSON.stringify(updatedVitals, null, 2));
+      
       
       // Update status for each vital
       Object.entries(updatedVitals).forEach(([key, data]) => {
@@ -280,14 +280,13 @@ export default function Index() {
             ...prev,
             vitals: updatedVitals
           };
-          console.log('Updated vitals with new statuses:', JSON.stringify(updated.vitals, null, 2));
+          
           return updated;
         });
       }
       
       // Update the health score in the userData
       const calculatedScore = calculateHealthProgress();
-      console.log('Calculated health score:', calculatedScore);
       
       if (userData.healthScore !== calculatedScore) {
         setUserData(prev => ({
@@ -393,8 +392,6 @@ export default function Index() {
     let scoreComponents = 0;
     let debugScoreInfo = [];
     
-    console.log("Processing vitals for health score:", JSON.stringify(vitals, null, 2));
-    
     // Heart rate - more nuanced scoring based on medical guidelines
     if (vitals.heartRate && 
         typeof vitals.heartRate.value === 'number' &&
@@ -429,7 +426,7 @@ export default function Index() {
       score += heartRateScore;
       debugScoreInfo.push(`HeartRate: ${heartRateScore}/25 (${hr} BPM)`);
     } else {
-      debugScoreInfo.push(`HeartRate: missing data - ${JSON.stringify(vitals.heartRate)}`);
+      debugScoreInfo.push(`HeartRate: missing data`);
     }
     
     // Steps - reward progress, not just completion
@@ -709,9 +706,9 @@ export default function Index() {
       debugScoreInfo.push(`Temperature: missing data - ${JSON.stringify(vitals.temperature)}`);
     }
     
-    // Debug the score calculation
-    console.log(`Health Score Debug: Components=${scoreComponents}, Score=${score}, Details:`, debugScoreInfo);
-    setDebugInfo(`Score: ${score}/${scoreComponents*25} - ${debugScoreInfo.join(', ')}`);
+    // Debug the score calculation - remove detailed heart rate logging
+    // console.log(`Health Score Debug: Components=${scoreComponents}, Score=${score}, Details:`, debugScoreInfo);
+    setDebugInfo(`Score: ${score}/${scoreComponents*25}`);
     
     // If no valid data components, return 0
     if (scoreComponents === 0) return 0;
@@ -790,27 +787,27 @@ export default function Index() {
         <View style={styles.welcomeContainer}>
           <LinearGradient
             colors={['rgba(0, 191, 255, 0.05)', 'rgba(30, 144, 255, 0.1)']}
-            style={styles.welcomeGradient}
-          >
-            <View style={styles.welcomeContent}>
-              <View style={styles.welcomeTextContainer}>
-                <Text style={styles.welcomeSubtitle}>{greeting},</Text>
-                <Text style={styles.welcomeName}>{userData.name}</Text>
-              </View>
-              <TouchableOpacity 
-                style={styles.healthScoreContainer}
-                onPress={() => Alert.alert('Health Score', `Your health score is calculated based on your vitals, activity, and habits.\n\nDebug Info: ${debugInfo}`)}
-              >
-                <LinearGradient
-                  colors={['#00BFFF', '#1E90FF', '#4169E1']}
-                  style={styles.healthScoreGradient}
-                >
-                  <Text style={styles.healthScoreValue}>{userData.healthScore}</Text>
-                  <Text style={styles.healthScoreLabel}>Health Score</Text>
-                </LinearGradient>
-              </TouchableOpacity>
+          style={styles.welcomeGradient}
+        >
+          <View style={styles.welcomeContent}>
+            <View style={styles.welcomeTextContainer}>
+              <Text style={styles.welcomeSubtitle}>{greeting},</Text>
+              <Text style={styles.welcomeName}>{userData.name}</Text>
             </View>
-          </LinearGradient>
+            <TouchableOpacity 
+              style={styles.healthScoreContainer}
+                onPress={() => Alert.alert('Health Score', `Your health score is calculated based on your vitals, activity, and habits.\n\nDebug Info: ${debugInfo}`)}
+            >
+              <LinearGradient
+                  colors={['#00BFFF', '#1E90FF', '#4169E1']}
+                style={styles.healthScoreGradient}
+              >
+                  <Text style={styles.healthScoreValue}>{userData.healthScore}</Text>
+                <Text style={styles.healthScoreLabel}>Health Score</Text>
+              </LinearGradient>
+          </TouchableOpacity>
+                </View>
+              </LinearGradient>
         </View>
 
         {/* Quick Actions */}
@@ -818,13 +815,13 @@ export default function Index() {
           <TouchableOpacity 
             style={styles.quickActionButton}
             onPress={() => handleQuickAction('chat')}
-          >
-            <LinearGradient
+            >
+              <LinearGradient
               colors={['#00BFFF', '#1E90FF']}
               style={styles.quickActionGradient}
             >
               <MaterialCommunityIcons name="robot" size={24} color="#fff" />
-            </LinearGradient>
+              </LinearGradient>
             <Text style={styles.quickActionText}>AI Chat</Text>
           </TouchableOpacity>
 
@@ -879,24 +876,24 @@ export default function Index() {
                 onPress={() => handleVitalPress(key)}
               >
                 <View style={styles.overviewCardContent}>
-                  <MaterialCommunityIcons 
-                    name={getVitalIcon(key as VitalType)} 
-                    size={24} 
-                    color={getVitalColor(key as VitalType)} 
-                  />
-                  <Text style={styles.overviewValue}>
-                    {typeof data.value === 'number' ? data.value.toLocaleString() : data.value}
-                  </Text>
-                  <Text style={styles.overviewLabel}>{key.charAt(0).toUpperCase() + key.slice(1)}</Text>
-                  <Text style={[
-                    styles.overviewStatus,
-                    { color: getStatusColor(data.status) }
-                  ]}>{data.status}</Text>
+                <MaterialCommunityIcons 
+                  name={getVitalIcon(key as VitalType)} 
+                  size={24} 
+                  color={getVitalColor(key as VitalType)} 
+                />
+                <Text style={styles.overviewValue}>
+                  {typeof data.value === 'number' ? data.value.toLocaleString() : data.value}
+                </Text>
+                <Text style={styles.overviewLabel}>{key.charAt(0).toUpperCase() + key.slice(1)}</Text>
+                <Text style={[
+                  styles.overviewStatus,
+                  { color: getStatusColor(data.status) }
+                ]}>{data.status}</Text>
                 </View>
               </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+                    ))}
+                  </View>
+                </View>
 
         {/* Upcoming */}
         <View style={styles.section}>
@@ -904,22 +901,22 @@ export default function Index() {
           <View style={styles.upcomingList}>
             {userData.upcoming.length > 0 ? (
               userData.upcoming.map((item) => (
-                <TouchableOpacity 
-                  key={item.id}
-                  style={styles.upcomingCard}
-                  onPress={() => handleUpcomingPress(item)}
-                >
+              <TouchableOpacity 
+                key={item.id}
+                style={styles.upcomingCard}
+                onPress={() => handleUpcomingPress(item)}
+              >
                   <View style={styles.upcomingCardContent}>
                     <View style={[styles.upcomingIconContainer, { borderColor: item.color }]}>
-                      <MaterialCommunityIcons name={item.icon} size={24} color={item.color} />
-                    </View>
-                    <View style={styles.upcomingContent}>
-                      <Text style={styles.upcomingTitle}>{item.title}</Text>
-                      <Text style={styles.upcomingTime}>{item.time}</Text>
-                    </View>
+                    <MaterialCommunityIcons name={item.icon} size={24} color={item.color} />
+                  </View>
+                  <View style={styles.upcomingContent}>
+                    <Text style={styles.upcomingTitle}>{item.title}</Text>
+                    <Text style={styles.upcomingTime}>{item.time}</Text>
+                  </View>
                     <MaterialIcons name="chevron-right" size={24} color="#00BFFF" />
                   </View>
-                </TouchableOpacity>
+              </TouchableOpacity>
               ))
             ) : (
               <View style={styles.emptyStateContainer}>
@@ -927,8 +924,8 @@ export default function Index() {
                 <Text style={styles.emptyStateText}>No upcoming events</Text>
               </View>
             )}
-          </View>
-        </View>
+                  </View>
+                </View>
 
         {/* Health Tips */}
         <View style={[styles.section, styles.lastSection]}>
@@ -943,12 +940,12 @@ export default function Index() {
             >
               <View style={styles.tipContent}>
                 <MaterialIcons name="lightbulb" size={24} color="#00BFFF" />
-                <Text style={styles.tipTitle}>Stay Hydrated!</Text>
-                <Text style={styles.tipText}>
-                  Drinking enough water helps maintain energy levels and supports overall health.
-                </Text>
+              <Text style={styles.tipTitle}>Stay Hydrated!</Text>
+              <Text style={styles.tipText}>
+                Drinking enough water helps maintain energy levels and supports overall health.
+              </Text>
               </View>
-            </LinearGradient>
+              </LinearGradient>
           </TouchableOpacity>
         </View>
       </ScrollView>
