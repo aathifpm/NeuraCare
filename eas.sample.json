@@ -1,0 +1,45 @@
+{
+    "cli": {
+      "version": ">= 5.9.1",
+      "appVersionSource": "remote"
+    },
+    "build": {
+      "development": {
+        "developmentClient": true,
+        "distribution": "internal",
+        "env": {
+          "GEMINI_API_KEY": "YOUR_GEMINI_API_KEY",
+          "FIREBASE_API_KEY": "YOUR_FIREBASE_API_KEY",
+          "FIREBASE_AUTH_DOMAIN": "YOUR_FIREBASE_AUTH_DOMAIN",
+          "FIREBASE_PROJECT_ID": "YOUR_FIREBASE_PROJECT_ID",
+          "FIREBASE_STORAGE_BUCKET": "YOUR_FIREBASE_STORAGE_BUCKET",
+          "FIREBASE_MESSAGING_SENDER_ID": "YOUR_FIREBASE_MESSAGING_SENDER_ID",
+          "FIREBASE_APP_ID": "YOUR_FIREBASE_APP_ID",
+          "FIREBASE_MEASUREMENT_ID": "YOUR_FIREBASE_MEASUREMENT_ID"
+        }
+      },
+      "preview": {
+        "distribution": "internal",
+        "android": {
+          "buildType": "apk"
+        },
+        "ios": {
+          "simulator": true
+        },
+        "env": {
+          "GEMINI_API_KEY": "YOUR_GEMINI_API_KEY",
+          "FIREBASE_API_KEY": "YOUR_FIREBASE_API_KEY",
+          "FIREBASE_AUTH_DOMAIN": "YOUR_FIREBASE_AUTH_DOMAIN",
+          "FIREBASE_PROJECT_ID": "YOUR_FIREBASE_PROJECT_ID",
+          "FIREBASE_STORAGE_BUCKET": "YOUR_FIREBASE_STORAGE_BUCKET",
+          "FIREBASE_MESSAGING_SENDER_ID": "YOUR_FIREBASE_MESSAGING_SENDER_ID",
+          "FIREBASE_APP_ID": "YOUR_FIREBASE_APP_ID",
+          "FIREBASE_MEASUREMENT_ID": "YOUR_FIREBASE_MEASUREMENT_ID"
+        }
+      },
+      "production": {}
+    },
+    "submit": {
+      "production": {}
+    }
+  } 
