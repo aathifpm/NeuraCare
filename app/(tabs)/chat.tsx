@@ -45,9 +45,20 @@ import Markdown from 'react-native-markdown-display'
 const { GoogleGenerativeAI } = require("@google/generative-ai")
 
 // Get API key from environment variables or use a fallback for development
-const GEMINI_API_KEY = Constants.expoConfig?.extra?.geminiApiKey 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+const GEMINI_API_KEY = Constants.expoConfig?.extra?.GEMINI_API_KEY
+if (!GEMINI_API_KEY) {
+  console.error('Gemini API key is not configured. Please check your environment variables and app configuration.')
+}
+
+// Initialize Gemini AI with error handling
+let genAI: any
+let model: any
+try {
+  genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
+  model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+} catch (error) {
+  console.error('Error initializing Gemini AI:', error)
+}
 
 // Types
 interface ChatMessage {
@@ -716,7 +727,15 @@ export default function ChatScreen() {
       // Log the complete prompt to verify all components are included
       
 
+      if (!model) {
+        throw new Error('Gemini AI model not initialized. Please check your API key configuration.')
+      }
+
+      try {
       const result = await model.generateContent(prompt)
+        if (!result || !result.response) {
+          throw new Error('Failed to get response from Gemini AI')
+        }
       const response = await result.response.text()
 
       // Enhance the response with better markdown formatting
@@ -747,6 +766,10 @@ export default function ChatScreen() {
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true })
       }, 100)
+      }
+    } catch (error) {
+      console.error('Error sending message:', error)
+      Alert.alert('Error', 'Failed to get a response. Please try again.')
     }
   }
 

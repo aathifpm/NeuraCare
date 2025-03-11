@@ -19,6 +19,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import DateTimePicker from '@react-native-community/datetimepicker'
 import { auth, db } from '../config/firebase'
+import * as Notifications from 'expo-notifications'
 import {
   doc,
   collection,
@@ -38,6 +39,15 @@ import { router } from 'expo-router'
 import { handleFirebaseError } from '../services/firebase'
 
 const { width } = Dimensions.get('window')
+
+// Configure notifications
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+})
 
 // Types
 interface Reminder {
@@ -89,6 +99,25 @@ export default function RemindersScreen() {
     return () => unsubscribeAuth()
   }, [])
 
+  // Add notification permission request in useEffect
+  useEffect(() => {
+    const requestNotificationPermissions = async () => {
+      try {
+        const { status } = await Notifications.requestPermissionsAsync()
+        if (status !== 'granted') {
+          Alert.alert(
+            'Permission Required',
+            'Please enable notifications to receive reminders'
+          )
+        }
+      } catch (error) {
+        console.error('Error requesting notification permissions:', error)
+      }
+    }
+
+    requestNotificationPermissions()
+  }, [])
+
   // Load reminders from Firestore
   const loadReminders = async (uid: string) => {
     try {
@@ -129,6 +158,47 @@ export default function RemindersScreen() {
     }
   }
 
+  const scheduleNotification = async (reminder: Reminder) => {
+    if (!reminder.notificationEnabled) return;
+
+    try {
+      const triggerDate = new Date(reminder.date.toDate());
+      const [hours, minutes] = reminder.time.split(':');
+      triggerDate.setHours(parseInt(hours), parseInt(minutes), 0);
+
+      // Cancel any existing notifications for this reminder
+      await Notifications.cancelScheduledNotificationAsync(reminder.id);
+
+      // Schedule new notification with correct trigger type
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: reminder.title,
+          body: reminder.description || `Time for your ${reminder.type} reminder!`,
+          sound: true,
+          priority: Notifications.AndroidNotificationPriority.HIGH,
+        },
+        trigger: {
+          channelId: 'reminders',
+          date: triggerDate,
+        },
+      });
+    } catch (error) {
+      console.error('Error scheduling notification:', error);
+    }
+  };
+
+  // Add notification channel creation for Android
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      Notifications.setNotificationChannelAsync('reminders', {
+        name: 'Reminders',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#4CAF50',
+      });
+    }
+  }, []);
+
   const handleAddReminder = async () => {
     if (!userId || !title.trim()) {
       Alert.alert('Error', 'Please enter a title for your reminder')
@@ -138,7 +208,6 @@ export default function RemindersScreen() {
     try {
       setLoading(true)
       
-      // Create the base reminder data
       const reminderData: Record<string, any> = {
         title: title.trim(),
         date: Timestamp.fromDate(date),
@@ -150,28 +219,37 @@ export default function RemindersScreen() {
         createdAt: Timestamp.now()
       }
       
-      // Only add description if it exists
       if (description.trim()) {
         reminderData.description = description.trim();
       }
       
-      // Only add recurringPattern if isRecurring is true
       if (isRecurring && recurringPattern) {
         reminderData.recurringPattern = recurringPattern;
       }
       
+      let reminderId: string;
+      
       if (editingReminder) {
-        // Update existing reminder
+        reminderId = editingReminder.id;
         await updateDoc(
-          doc(db, 'users', userId, 'reminders', editingReminder.id),
+          doc(db, 'users', userId, 'reminders', reminderId),
           reminderData
-        )
+        );
       } else {
-        // Add new reminder
-        await addDoc(
+        const docRef = await addDoc(
           collection(db, 'users', userId, 'reminders'),
           reminderData
-        )
+        );
+        reminderId = docRef.id;
+      }
+      
+      // Schedule notification
+      if (notificationEnabled) {
+        await scheduleNotification({
+          id: reminderId,
+          ...reminderData,
+          date: reminderData.date as Timestamp,
+        } as Reminder);
       }
       
       resetForm()
@@ -340,43 +418,69 @@ export default function RemindersScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={['#4CAF50', '#2196F3']}
-        style={styles.header}
-      >
-        <Text style={styles.headerTitle}>Reminders</Text>
-        <Text style={styles.headerSubtitle}>
-          Stay on track with your health goals
-        </Text>
-      </LinearGradient>
+      {/* Header with modern gradient border */}
+      <View style={styles.headerWrapper}>
+        <LinearGradient
+          colors={['#00BFFF', '#1E90FF', '#4169E1']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerBorder}
+        />
+        <View style={styles.header}>
+          <View style={styles.headerContent}>
+            <View style={styles.logoSection}>
+              <LinearGradient
+                colors={['#00BFFF', '#1E90FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.logoGradient}
+              >
+                <MaterialIcons name="notifications-active" size={24} color="#fff" />
+              </LinearGradient>
+              <Text style={styles.headerTitle}>Reminders</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.refreshButton}
+              onPress={() => {
+                resetForm();
+                setModalVisible(true);
+              }}
+            >
+              <MaterialIcons name="add" size={24} color="#00BFFF" />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.headerSubtitle}>
+            Stay on track with your health goals
+          </Text>
 
-      {/* Filter Tabs */}
-      <View style={styles.filterTabs}>
-        <TouchableOpacity
-          style={[styles.filterTab, filter === 'active' && styles.activeFilterTab]}
-          onPress={() => setFilter('active')}
-        >
-          <Text style={[styles.filterTabText, filter === 'active' && styles.activeFilterTabText]}>
-            Active
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterTab, filter === 'completed' && styles.activeFilterTab]}
-          onPress={() => setFilter('completed')}
-        >
-          <Text style={[styles.filterTabText, filter === 'completed' && styles.activeFilterTabText]}>
-            Completed
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterTab, filter === 'all' && styles.activeFilterTab]}
-          onPress={() => setFilter('all')}
-        >
-          <Text style={[styles.filterTabText, filter === 'all' && styles.activeFilterTabText]}>
-            All
-          </Text>
-        </TouchableOpacity>
+          {/* Filter Tabs */}
+          <View style={styles.filterTabs}>
+            <TouchableOpacity
+              style={[styles.filterTab, filter === 'active' && styles.activeFilterTab]}
+              onPress={() => setFilter('active')}
+            >
+              <Text style={[styles.filterTabText, filter === 'active' && styles.activeFilterTabText]}>
+                Active
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterTab, filter === 'completed' && styles.activeFilterTab]}
+              onPress={() => setFilter('completed')}
+            >
+              <Text style={[styles.filterTabText, filter === 'completed' && styles.activeFilterTabText]}>
+                Completed
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterTab, filter === 'all' && styles.activeFilterTab]}
+              onPress={() => setFilter('all')}
+            >
+              <Text style={[styles.filterTabText, filter === 'all' && styles.activeFilterTabText]}>
+                All
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
       <ScrollView
@@ -385,8 +489,8 @@ export default function RemindersScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#4CAF50']}
-            tintColor="#4CAF50"
+            colors={['#00BFFF']}
+            tintColor="#00BFFF"
           />
         }
       >
@@ -487,17 +591,6 @@ export default function RemindersScreen() {
           </View>
         )}
       </ScrollView>
-
-      {/* Add Button */}
-      <TouchableOpacity
-        style={styles.addButton}
-        onPress={() => {
-          resetForm()
-          setModalVisible(true)
-        }}
-      >
-        <MaterialIcons name="add" size={24} color="#fff" />
-      </TouchableOpacity>
 
       {/* Add/Edit Reminder Modal */}
       <Modal
@@ -731,11 +824,52 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#121212',
   },
+  headerWrapper: {
+    position: 'relative',
+    paddingTop: Platform.OS === 'ios' ? 44 : 0,
+  },
+  headerBorder: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: Platform.OS === 'ios' ? 130 : 110,
+    opacity: 0.2,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+  },
   header: {
     padding: 16,
-    paddingTop: Platform.OS === 'ios' ? 60 : 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+    paddingTop: Platform.OS === 'ios' ? 50 : 16,
+    zIndex: 1,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  logoSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  logoGradient: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  refreshButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 191, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: '#00BFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitle: {
     color: '#fff',
@@ -748,39 +882,35 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12,
   },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
   filterTabs: {
     flexDirection: 'row',
-    backgroundColor: '#1E1E1E',
-    borderRadius: 8,
-    marginHorizontal: 16,
-    marginTop: -16,
-    marginBottom: 8,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    backgroundColor: 'rgba(0, 191, 255, 0.1)',
+    marginTop: 16,
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#00BFFF',
   },
   filterTab: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 8,
     alignItems: 'center',
-  },
-  activeFilterTab: {
-    backgroundColor: '#2196F3',
     borderRadius: 8,
   },
+  activeFilterTab: {
+    backgroundColor: '#00BFFF',
+  },
   filterTabText: {
-    color: '#fff',
+    color: '#00BFFF',
+    fontSize: 14,
     fontWeight: '500',
   },
   activeFilterTabText: {
     color: '#fff',
-    fontWeight: 'bold',
+  },
+  content: {
+    flex: 1,
+    padding: 16,
   },
   remindersList: {
     gap: 12,

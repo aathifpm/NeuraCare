@@ -17,8 +17,10 @@ import { BlurView } from 'expo-blur'
 import Header from '@/components/Header'
 import { router } from 'expo-router'
 import { auth, db } from '../config/firebase'
-import { doc, getDoc, onSnapshot, DocumentData } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot, DocumentData, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore'
 import { onAuthStateChanged, User } from 'firebase/auth'
+import { Timestamp } from 'firebase/firestore'
+import * as Notifications from 'expo-notifications'
 
 const { width } = Dimensions.get('window')
 
@@ -44,12 +46,14 @@ type UserData = {
   healthScore: number
   vitals: Record<VitalType, VitalData>
   upcoming: Array<{
-    id: number
-    type: 'medication' | 'appointment'
+    id: string
+    type: 'medication' | 'appointment' | 'exercise' | 'water'
     title: string
     time: string
+    date: Timestamp
     icon: keyof typeof MaterialCommunityIcons.glyphMap
     color: string
+    isCompleted: boolean
   }>
 }
 
@@ -106,54 +110,30 @@ export default function Index() {
         if (healthSnapshot.exists()) {
           const healthData = healthSnapshot.data()
           
-          // Debug the data structure
-          
-          
-          // Check if vitals data exists
           if (!healthData.vitals) {
             console.warn('No vitals data found in Firestore, using defaults')
             setDebugInfo('No vitals data in Firestore')
           }
           
-          // Create a complete vitals object by merging with defaults
           const mergedVitals = {
             ...defaultUserData.vitals,
             ...(healthData.vitals || {})
           };
           
-          // Add any missing vital types
           Object.keys(defaultUserData.vitals).forEach(key => {
             if (!mergedVitals[key as VitalType]) {
               mergedVitals[key as VitalType] = defaultUserData.vitals[key as VitalType];
             }
           });
           
-          // Process and set the user data with the updated vitals
-          setUserData(currentData => {
-            const newData = {
-            ...currentData,
-              vitals: mergedVitals,
-            upcoming: healthData.upcoming || [],
-            };
-            
-            // Debug the processed data
-            
-            setDebugInfo(`Data processed: ${Object.keys(mergedVitals).length} vitals`);
-            
-            // Return the updated user data
-            return newData;
-          });
-        } else {
-          // No health data found, use defaults but log it
-          console.warn('No health document found in Firestore for user', user.uid);
-          setDebugInfo('No health document in Firestore');
-          
-          // Still set default values to ensure the UI works
           setUserData(currentData => ({
             ...currentData,
-            vitals: defaultUserData.vitals,
+            vitals: mergedVitals,
           }));
         }
+
+        // Fetch upcoming reminders
+        await fetchUpcomingReminders(user.uid);
 
         setLoading(false)
         return () => {
@@ -178,16 +158,6 @@ export default function Index() {
     else if (hour < 18) setGreeting('Good afternoon')
     else setGreeting('Good evening')
   }, [])
-
-  // Handle sign out
-  const handleSignOut = async () => {
-    try {
-      await auth.signOut()
-      router.replace('/LoginScreen')
-    } catch (error) {
-      Alert.alert('Error', 'Failed to sign out. Please try again.')
-    }
-  }
 
   // Handle quick action navigation
   const handleQuickAction = (action: string) => {
@@ -717,6 +687,241 @@ export default function Index() {
     return Math.round((score / (scoreComponents * 25)) * 100);
   }
 
+  // Add notification scheduling helper function
+  const scheduleNotifications = async (reminder: UserData['upcoming'][0]) => {
+    try {
+      const reminderDate = reminder.date.toDate();
+      const [hours, minutes] = reminder.time.split(':').map(Number);
+      const eventTime = new Date(reminderDate);
+      eventTime.setHours(hours, minutes, 0, 0);
+
+      // Cancel any existing notifications for this reminder
+      await Notifications.cancelScheduledNotificationAsync(reminder.id);
+      
+      // Define notification times based on reminder type
+      const notificationTimes = [];
+      
+      switch (reminder.type) {
+        case 'appointment':
+          // For appointments: Day start (8 AM), 6 hours, 1 hour, and 15 minutes before
+          const dayStart = new Date(eventTime);
+          dayStart.setHours(8, 0, 0, 0);
+          if (dayStart < eventTime) {
+            notificationTimes.push({
+              time: dayStart,
+              title: `Today's Appointment`,
+              body: `You have an appointment "${reminder.title}" today at ${reminder.time}`
+            });
+          }
+
+          const sixHoursBefore = new Date(eventTime.getTime() - 6 * 60 * 60 * 1000);
+          if (sixHoursBefore > new Date()) {
+            notificationTimes.push({
+              time: sixHoursBefore,
+              title: `Appointment in 6 hours`,
+              body: `Your appointment "${reminder.title}" is in 6 hours`
+            });
+          }
+          break;
+
+        case 'medication':
+          // For medications: 1 hour and 15 minutes before
+          const oneHourBefore = new Date(eventTime.getTime() - 60 * 60 * 1000);
+          if (oneHourBefore > new Date()) {
+            notificationTimes.push({
+              time: oneHourBefore,
+              title: `Medication Reminder`,
+              body: `Time to take "${reminder.title}" in 1 hour`
+            });
+          }
+          break;
+
+        case 'exercise':
+          // For exercise: 2 hours, 1 hour, and 30 minutes before
+          const twoHoursBefore = new Date(eventTime.getTime() - 2 * 60 * 60 * 1000);
+          if (twoHoursBefore > new Date()) {
+            notificationTimes.push({
+              time: twoHoursBefore,
+              title: `Exercise Session Soon`,
+              body: `Prepare for your "${reminder.title}" session in 2 hours`
+            });
+          }
+
+          const exerciseOneHourBefore = new Date(eventTime.getTime() - 60 * 60 * 1000);
+          if (exerciseOneHourBefore > new Date()) {
+            notificationTimes.push({
+              time: exerciseOneHourBefore,
+              title: `Exercise Reminder`,
+              body: `Your "${reminder.title}" session is in 1 hour. Get ready!`
+            });
+          }
+          break;
+
+        case 'water':
+          // For water: Gentle reminders throughout the day
+          const waterReminders = [
+            { hours: 9, minutes: 0, title: "Morning Hydration" },
+            { hours: 12, minutes: 0, title: "Midday Hydration" },
+            { hours: 15, minutes: 0, title: "Afternoon Hydration" },
+            { hours: 18, minutes: 0, title: "Evening Hydration" }
+          ];
+
+          for (const time of waterReminders) {
+            const reminderTime = new Date(reminderDate);
+            reminderTime.setHours(time.hours, time.minutes, 0, 0);
+            
+            if (reminderTime > new Date()) {
+              notificationTimes.push({
+                time: reminderTime,
+                title: time.title,
+                body: `Time to drink water! ${reminder.title}`
+              });
+            }
+          }
+          break;
+
+        default:
+          // For all other types: 1 hour and 30 minutes before
+          const defaultOneHourBefore = new Date(eventTime.getTime() - 60 * 60 * 1000);
+          if (defaultOneHourBefore > new Date()) {
+            notificationTimes.push({
+              time: defaultOneHourBefore,
+              title: `Reminder`,
+              body: `"${reminder.title}" is scheduled in 1 hour`
+            });
+          }
+      }
+
+      // Common notification for all types (except water) - 15 minutes before
+      if (reminder.type !== 'water') {
+        const fifteenMinsBefore = new Date(eventTime.getTime() - 15 * 60 * 1000);
+        if (fifteenMinsBefore > new Date()) {
+          notificationTimes.push({
+            time: fifteenMinsBefore,
+            title: `${reminder.type.charAt(0).toUpperCase() + reminder.type.slice(1)} in 15 minutes`,
+            body: getNotificationMessage(reminder.type, reminder.title)
+          });
+        }
+      }
+
+      // Schedule all notifications
+      for (const notification of notificationTimes) {
+        const identifier = `${reminder.id}-${notification.time.getTime()}`;
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: notification.title,
+            body: notification.body,
+            sound: true,
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+            data: { 
+              reminderId: reminder.id,
+              reminderType: reminder.type
+            }
+          },
+          trigger: {
+            date: notification.time,
+            channelId: 'reminders'
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Error scheduling notifications:', error);
+    }
+  };
+
+  // Helper function to get notification messages
+  const getNotificationMessage = (type: string, title: string): string => {
+    switch (type) {
+      case 'medication':
+        return `Time to take "${title}" in 15 minutes`;
+      case 'appointment':
+        return `Your appointment "${title}" is in 15 minutes`;
+      case 'exercise':
+        return `Time for your "${title}" session in 15 minutes. Get ready!`;
+      case 'water':
+        return `Don't forget to drink water! ${title}`;
+      default:
+        return `"${title}" is scheduled in 15 minutes`;
+    }
+  };
+
+  // Update the fetchUpcomingReminders function to include notification scheduling
+  const fetchUpcomingReminders = async (uid: string) => {
+    try {
+      const remindersRef = collection(db, 'users', uid, 'reminders');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const q = query(
+        remindersRef,
+        where('date', '>=', Timestamp.fromDate(today)),
+        orderBy('date', 'asc'),
+        limit(5)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const upcomingReminders = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        const reminder = {
+          id: doc.id,
+          type: data.type as 'medication' | 'appointment' | 'exercise' | 'water',
+          title: data.title,
+          time: data.time,
+          date: data.date,
+          icon: getReminderIcon(data.type),
+          color: getReminderColor(data.type),
+          isCompleted: data.isCompleted || false
+        };
+
+        // Schedule notifications for non-completed reminders
+        if (!reminder.isCompleted) {
+          scheduleNotifications(reminder);
+        }
+
+        return reminder;
+      });
+      
+      setUserData(prev => ({
+        ...prev,
+        upcoming: upcomingReminders
+      }));
+    } catch (error) {
+      console.error('Error fetching reminders:', error);
+      setDebugInfo(`Error fetching reminders: ${error}`);
+    }
+  };
+
+  // Add helper functions for reminder icons and colors
+  const getReminderIcon = (type: string): keyof typeof MaterialCommunityIcons.glyphMap => {
+    switch (type) {
+      case 'medication':
+        return 'pill'
+      case 'appointment':
+        return 'calendar-clock'
+      case 'exercise':
+        return 'run'
+      case 'water':
+        return 'cup-water'
+      default:
+        return 'bell'
+    }
+  }
+
+  const getReminderColor = (type: string): string => {
+    switch (type) {
+      case 'medication':
+        return '#FF5722'
+      case 'appointment':
+        return '#2196F3'
+      case 'exercise':
+        return '#4CAF50'
+      case 'water':
+        return '#00BCD4'
+      default:
+        return '#9C27B0'
+    }
+  }
+
   if (loading) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
@@ -757,20 +962,6 @@ export default function Index() {
                     <Text style={styles.badgeText}>2</Text>
                   </View>
                 </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.profileButton}
-                onPress={handleSignOut}
-              >
-                <LinearGradient
-                  colors={['#00BFFF', '#1E90FF']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.profileGradient}
-                >
-                  <MaterialIcons name="person" size={20} color="#fff" />
-                </LinearGradient>
               </TouchableOpacity>
             </View>
           </View>
@@ -903,7 +1094,10 @@ export default function Index() {
               userData.upcoming.map((item) => (
               <TouchableOpacity 
                 key={item.id}
-                style={styles.upcomingCard}
+                  style={[
+                    styles.upcomingCard,
+                    item.isCompleted && styles.upcomingCardCompleted
+                  ]}
                 onPress={() => handleUpcomingPress(item)}
               >
                   <View style={styles.upcomingCardContent}>
@@ -911,10 +1105,21 @@ export default function Index() {
                     <MaterialCommunityIcons name={item.icon} size={24} color={item.color} />
                   </View>
                   <View style={styles.upcomingContent}>
-                    <Text style={styles.upcomingTitle}>{item.title}</Text>
-                    <Text style={styles.upcomingTime}>{item.time}</Text>
+                      <Text style={[
+                        styles.upcomingTitle,
+                        item.isCompleted && styles.upcomingTitleCompleted
+                      ]}>
+                        {item.title}
+                      </Text>
+                      <Text style={styles.upcomingTime}>
+                        {item.date.toDate().toLocaleDateString()} • {item.time}
+                      </Text>
                   </View>
-                    <MaterialIcons name="chevron-right" size={24} color="#00BFFF" />
+                    <MaterialIcons 
+                      name={item.isCompleted ? "check-circle" : "chevron-right"} 
+                      size={24} 
+                      color={item.isCompleted ? "#4CAF50" : "#00BFFF"} 
+                    />
                   </View>
               </TouchableOpacity>
               ))
@@ -1050,7 +1255,6 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
   },
   actionButton: {
     width: 40,
@@ -1080,17 +1284,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 10,
     fontWeight: 'bold',
-  },
-  profileButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    overflow: 'hidden',
-  },
-  profileGradient: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   searchBar: {
     flexDirection: 'row',
@@ -1307,5 +1500,13 @@ const styles = StyleSheet.create({
   loadingText: {
     color: '#00BFFF',
     fontSize: 16,
+  },
+  upcomingCardCompleted: {
+    opacity: 0.7,
+    backgroundColor: 'rgba(76, 175, 80, 0.05)',
+  },
+  upcomingTitleCompleted: {
+    textDecorationLine: 'line-through',
+    color: '#4CAF50',
   },
 })
