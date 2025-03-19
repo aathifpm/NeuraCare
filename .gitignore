@@ -6,6 +6,7 @@ android/
 # Expo
 .expo/
 dist/
+NeuraCare
 web-build/
 expo-env.d.ts
 .env
