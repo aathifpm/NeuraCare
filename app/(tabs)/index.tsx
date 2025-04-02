@@ -9,8 +9,10 @@ import {
   Platform,
   Dimensions,
   Alert,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { MaterialIcons, MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { BlurView } from 'expo-blur'
@@ -79,6 +81,7 @@ export default function Index() {
   const [loading, setLoading] = useState(true)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [debugInfo, setDebugInfo] = useState<string>('') // For debugging
+  const [refreshing, setRefreshing] = useState(false);
 
   // Check authentication and fetch user data
   useEffect(() => {
@@ -867,7 +870,7 @@ export default function Index() {
           type: data.type as 'medication' | 'appointment' | 'exercise' | 'water',
           title: data.title,
           time: data.time,
-          date: data.date,
+          date: data.date as Timestamp,
           icon: getReminderIcon(data.type),
           color: getReminderColor(data.type),
           isCompleted: data.isCompleted || false
@@ -922,6 +925,111 @@ export default function Index() {
     }
   }
 
+  // Add load functions
+  const loadUserProfile = async (uid: string) => {
+    try {
+      const userDocRef = doc(db, 'users', uid);
+      const docSnapshot = await getDoc(userDocRef);
+      if (docSnapshot.exists()) {
+        const profileData = docSnapshot.data() as UserProfile;
+        setUserData(currentData => ({
+          ...currentData,
+          name: profileData.fullName || '',
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+    }
+  };
+
+  const loadHealthData = async (uid: string) => {
+    try {
+      const healthDocRef = doc(db, 'health_data', uid);
+      const healthSnapshot = await getDoc(healthDocRef);
+      
+      if (healthSnapshot.exists()) {
+        const healthData = healthSnapshot.data();
+        
+        if (!healthData.vitals) {
+          console.warn('No vitals data found in Firestore, using defaults');
+          setDebugInfo('No vitals data in Firestore');
+        }
+        
+        const mergedVitals = {
+          ...defaultUserData.vitals,
+          ...(healthData.vitals || {})
+        };
+        
+        Object.keys(defaultUserData.vitals).forEach(key => {
+          if (!mergedVitals[key as VitalType]) {
+            mergedVitals[key as VitalType] = defaultUserData.vitals[key as VitalType];
+          }
+        });
+        
+        setUserData(currentData => ({
+          ...currentData,
+          vitals: mergedVitals,
+          healthScore: calculateHealthProgress(),
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading health data:', error);
+    }
+  };
+
+  const loadUpcomingReminders = async (uid: string) => {
+    try {
+      const now = new Date();
+      const remindersRef = collection(db, 'users', uid, 'reminders');
+      const q = query(
+        remindersRef,
+        where('date', '>=', now),
+        orderBy('date', 'asc'),
+        limit(5)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const upcomingReminders = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+        id: doc.id,
+          type: data.type as 'medication' | 'appointment' | 'exercise' | 'water',
+          title: data.title,
+          time: data.time,
+          date: data.date as Timestamp,
+          icon: getReminderIcon(data.type),
+          color: getReminderColor(data.type),
+          isCompleted: data.isCompleted || false,
+        };
+      });
+      
+      setUserData(currentData => ({
+        ...currentData,
+        upcoming: upcomingReminders,
+      }));
+    } catch (error) {
+      console.error('Error loading upcoming reminders:', error);
+    }
+  };
+
+  // Update the refresh handler
+  const onRefresh = useCallback(async () => {
+    if (!currentUser) return;
+    
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadUserProfile(currentUser.uid),
+        loadHealthData(currentUser.uid),
+        loadUpcomingReminders(currentUser.uid),
+      ]);
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [currentUser]);
+
   if (loading) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
@@ -973,7 +1081,20 @@ export default function Index() {
         </View>
       </View>
       
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#00BFFF']}
+            tintColor="#00BFFF"
+            title="Pull to refresh"
+            titleColor="#00BFFF"
+          />
+        }
+      >
         {/* Welcome Section with Health Score */}
         <View style={styles.welcomeContainer}>
           <LinearGradient

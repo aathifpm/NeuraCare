@@ -11,6 +11,8 @@ import {
   Dimensions,
   RefreshControl,
   ActivityIndicator,
+  Modal,
+  TouchableWithoutFeedback,
 } from 'react-native'
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -485,14 +487,14 @@ export default function TrackScreen() {
 
     try {
       setLoading(true);
-      const vitalKey = newVitalName.replace(/\s+/g, '');
+      const vitalKey = newVitalName.toLowerCase().replace(/\s+/g, '');
       
       const newVitalConfig: VitalConfig = {
         unit: newVitalUnit,
         goal: Number(newVitalGoal),
         type: newVitalType,
-        icon: 'medical-bag', // Default icon
-        color: '#666', // Default color
+        icon: getVitalIcon(vitalKey),
+        color: getVitalColor(vitalKey),
         ranges: {
           low: Number(newVitalGoal) * 0.8,
           high: Number(newVitalGoal) * 1.2,
@@ -620,26 +622,85 @@ export default function TrackScreen() {
           <Text style={styles.addVitalButtonText}>Add New Vital</Text>
         </TouchableOpacity>
 
-        {/* Add New Vital Form */}
-        {isAddingNewVital && (
-          <View style={styles.updateForm}>
-            <Text style={styles.updateTitle}>Add New Vital Type</Text>
+        {/* Vitals Grid */}
+        <View style={styles.vitalsGrid}>
+          {Object.entries(healthData.vitals).map(([key, data]) => {
+            const vitalConfig = healthData.vitalConfigs[key] || {
+              icon: 'medical-bag',
+              color: '#666',
+              unit: data.unit,
+              type: data.type,
+              goal: data.goal,
+              ranges: { low: 0, high: 100, optimal: 50 }
+            };
+
+            return (
+              <View key={key} style={styles.vitalCardContainer}>
+                <TouchableOpacity
+                  style={styles.vitalCard}
+                  onPress={() => setSelectedVital(key)}
+                >
+                  <MaterialCommunityIcons
+                    name={vitalConfig.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                    size={24}
+                    color={getStatusColor(data.status)}
+                  />
+                  <Text style={styles.vitalValue}>
+                    {renderVitalValue(data.value, data.unit)}
+                  </Text>
+                  <Text style={styles.vitalLabel}>
+                    {key.replace(/([A-Z])/g, ' $1').trim()}
+                  </Text>
+                  <Text style={[
+                    styles.vitalStatus,
+                    { color: getStatusColor(data.status) }
+                  ]}>
+                    {data.status}
+                  </Text>
+                  <Text style={styles.timestamp}>
+                    {formatTimestamp(data.timestamp)}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.historyButton}
+                  onPress={() => loadMetricHistory(key)}
+                >
+                  <MaterialIcons name="history" size={16} color="#fff" />
+                  <Text style={styles.historyButtonText}>History</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* Add New Vital Modal */}
+        <Modal
+          visible={isAddingNewVital}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setIsAddingNewVital(false)}
+        >
+          <TouchableWithoutFeedback onPress={() => setIsAddingNewVital(false)}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>Add New Vital Type</Text>
             <TextInput
-              style={styles.input}
+                    style={styles.modalInput}
               value={newVitalName}
               onChangeText={setNewVitalName}
               placeholder="Vital Name (e.g., Blood Sugar)"
               placeholderTextColor="#666"
             />
             <TextInput
-              style={styles.input}
+                    style={styles.modalInput}
               value={newVitalUnit}
               onChangeText={setNewVitalUnit}
               placeholder="Unit (e.g., mg/dL)"
               placeholderTextColor="#666"
             />
             <TextInput
-              style={styles.input}
+                    style={styles.modalInput}
               value={newVitalGoal}
               onChangeText={setNewVitalGoal}
               placeholder="Target/Goal Value"
@@ -666,9 +727,9 @@ export default function TrackScreen() {
                 <Text style={styles.typeButtonText}>Text</Text>
               </TouchableOpacity>
             </View>
-            <View style={styles.formButtons}>
+                  <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={[styles.button, styles.cancelButton]}
+                      style={[styles.modalButton, styles.cancelButton]}
                 onPress={() => {
                   setIsAddingNewVital(false);
                   setNewVitalName('');
@@ -679,74 +740,34 @@ export default function TrackScreen() {
                 <Text style={styles.buttonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.button, styles.updateButton]}
+                      style={[styles.modalButton, styles.updateButton]}
                 onPress={handleAddNewVital}
               >
                 <Text style={styles.buttonText}>Add Vital</Text>
               </TouchableOpacity>
             </View>
           </View>
-        )}
-
-        {/* Vitals Grid */}
-        <View style={styles.vitalsGrid}>
-          {Object.entries(healthData.vitals).map(([key, data]) => {
-            const vitalConfig = healthData.vitalConfigs[key] || {
-              icon: 'medical-bag',
-              color: '#666',
-              unit: data.unit,
-              type: data.type,
-              goal: data.goal,
-              ranges: { low: 0, high: 100, optimal: 50 }
-            };
-
-            return (
-            <View key={key} style={styles.vitalCardContainer}>
-              <TouchableOpacity
-                style={styles.vitalCard}
-                onPress={() => setSelectedVital(key)}
-              >
-                <MaterialCommunityIcons
-                    name={(vitalConfig.icon || 'medical-bag') as keyof typeof MaterialCommunityIcons.glyphMap}
-                  size={24}
-                  color={getStatusColor(data.status)}
-                />
-                <Text style={styles.vitalValue}>
-                    {renderVitalValue(data.value, data.unit)}
-                </Text>
-                <Text style={styles.vitalLabel}>
-                  {key.replace(/([A-Z])/g, ' $1').trim()}
-                </Text>
-                <Text style={[
-                  styles.vitalStatus,
-                  { color: getStatusColor(data.status) }
-                ]}>
-                  {data.status}
-                </Text>
-                <Text style={styles.timestamp}>
-                  {formatTimestamp(data.timestamp)}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.historyButton}
-                onPress={() => loadMetricHistory(key)}
-              >
-                <MaterialIcons name="history" size={16} color="#fff" />
-                <Text style={styles.historyButtonText}>History</Text>
-              </TouchableOpacity>
+              </TouchableWithoutFeedback>
             </View>
-            );
-          })}
-        </View>
+          </TouchableWithoutFeedback>
+        </Modal>
 
-        {/* Update Vital Form */}
-        {selectedVital && (
-          <View style={styles.updateForm}>
-            <Text style={styles.updateTitle}>
-              Update {selectedVital.replace(/([A-Z])/g, ' $1').trim()}
+        {/* Update Vital Modal */}
+        <Modal
+          visible={selectedVital !== null}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setSelectedVital(null)}
+        >
+          <TouchableWithoutFeedback onPress={() => setSelectedVital(null)}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>
+                    Update {selectedVital?.replace(/([A-Z])/g, ' $1').trim()}
             </Text>
             <TextInput
-              style={styles.input}
+                    style={styles.modalInput}
               value={newValue}
               onChangeText={setNewValue}
               placeholder={`Enter ${selectedVital} value`}
@@ -754,33 +775,36 @@ export default function TrackScreen() {
               keyboardType="numeric"
             />
             <TextInput
-              style={[styles.input, styles.notesInput]}
+                    style={[styles.modalInput, styles.notesInput]}
               value={notes}
               onChangeText={setNotes}
               placeholder="Add notes (optional)"
               placeholderTextColor="#666"
               multiline
             />
-            <View style={styles.formButtons}>
+                  <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={[styles.button, styles.cancelButton]}
+                      style={[styles.modalButton, styles.cancelButton]}
                 onPress={() => {
-                  setSelectedVital(null)
-                  setNewValue('')
-                  setNotes('')
+                        setSelectedVital(null);
+                        setNewValue('');
+                        setNotes('');
                 }}
               >
                 <Text style={styles.buttonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.button, styles.updateButton]}
+                      style={[styles.modalButton, styles.updateButton]}
                 onPress={handleUpdateVital}
               >
                 <Text style={styles.buttonText}>Update</Text>
               </TouchableOpacity>
             </View>
           </View>
-        )}
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
 
         {/* Health Tips */}
         <View style={styles.tipsContainer}>
@@ -821,9 +845,37 @@ const getVitalIcon = (type: string): keyof typeof MaterialCommunityIcons.glyphMa
     bloodPressure: 'blood-bag',
     temperature: 'thermometer',
     oxygenLevel: 'lungs',
-  }
-  return icons[type] || 'medical-bag'
-}
+    bloodSugar: 'water',
+    weight: 'scale-bathroom',
+    height: 'human-male-height',
+    bmi: 'human-male',
+    cholesterol: 'blood-bag',
+    bloodPressureSystolic: 'arrow-up-bold',
+    bloodPressureDiastolic: 'arrow-down-bold',
+    respiratoryRate: 'lungs',
+    pulse: 'heart-pulse',
+  };
+  return icons[type] || 'medical-bag';
+};
+
+const getVitalColor = (type: string): string => {
+  const colors: { [key: string]: string } = {
+    heartRate: '#FF5722',
+    bloodPressure: '#F44336',
+    temperature: '#FF9800',
+    oxygenLevel: '#E91E63',
+    bloodSugar: '#9C27B0',
+    weight: '#4CAF50',
+    height: '#2196F3',
+    bmi: '#3F51B5',
+    cholesterol: '#F44336',
+    bloodPressureSystolic: '#E91E63',
+    bloodPressureDiastolic: '#9C27B0',
+    respiratoryRate: '#00BCD4',
+    pulse: '#FF5722',
+  };
+  return colors[type] || '#666';
+};
 
 const getStatusColor = (status: string): string => {
   const colors: { [key: string]: string } = {
@@ -1162,5 +1214,49 @@ const styles = StyleSheet.create({
   typeButtonText: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 16,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: '#00BFFF',
+  },
+  modalTitle: {
+    color: '#00BFFF',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  modalInput: {
+    backgroundColor: 'rgba(0, 191, 255, 0.1)',
+    borderRadius: 8,
+    padding: 12,
+    color: '#fff',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#00BFFF',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
   },
 }) 
