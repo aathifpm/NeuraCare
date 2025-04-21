@@ -27,7 +27,7 @@ import * as Notifications from 'expo-notifications'
 const { width } = Dimensions.get('window')
 
 // Type definitions
-type VitalType = 'heartRate' | 'steps' | 'sleep' | 'water' | 'temperature' | 'oxygenLevel' | 'bloodPressure'
+type VitalType = 'heartRate' | 'sleep' | 'water' | 'temperature' | 'oxygenLevel' | 'bloodPressure' | 'weight'
 type VitalData = {
   value: number | string
   unit: string
@@ -65,12 +65,12 @@ const defaultUserData: UserData = {
   healthScore: 0,
   vitals: {
     heartRate: { value: 0, unit: 'BPM', status: 'Normal', type: 'number' },
-    steps: { value: 0, unit: 'steps', status: 'On Track', goal: 10000, type: 'number' },
     sleep: { value: '0h 0m', unit: 'hours', status: 'Good', type: 'string' },
     water: { value: 0, unit: 'L', status: 'Need More', goal: 2.5, type: 'number' },
     temperature: { value: 0, unit: '°C', status: 'Normal', type: 'number' },
     oxygenLevel: { value: 0, unit: '%', status: 'Normal', type: 'number' },
     bloodPressure: { value: '0/0', unit: 'mmHg', status: 'Normal', type: 'string' },
+    weight: { value: 0, unit: 'kg', status: 'Normal', type: 'number' },
   },
   upcoming: [],
 }
@@ -285,14 +285,11 @@ export default function Index() {
           if (value > 100) return 'High';
           return 'Normal';
         
-        case 'steps':
-          const stepsGoal = userData.vitals.steps?.goal || 10000;
-          const percentage = (value / stepsGoal) * 100;
-          if (percentage >= 100) return 'Achieved';
-          if (percentage >= 75) return 'Almost There';
-          if (percentage >= 50) return 'On Track';
-          if (percentage >= 25) return 'Getting Started';
-          return 'Need More';
+        case 'weight':
+          // This is a simplified approach - ideally would consider age, height, gender, etc.
+          if (value < 45) return 'Low';
+          if (value > 100) return 'High';
+          return 'Normal';
         
         case 'water':
           const waterGoal = userData.vitals.water?.goal || 2.5;
@@ -403,46 +400,6 @@ export default function Index() {
     }
     
     // Steps - reward progress, not just completion
-    if (vitals.steps && 
-        typeof vitals.steps.value === 'number' &&
-        !isNaN(vitals.steps.value)) {
-      scoreComponents++;
-      // Use steps.goal if available, otherwise default to 10000
-      const stepsGoal = (vitals.steps.goal && !isNaN(vitals.steps.goal)) ? vitals.steps.goal : 10000;
-      
-      // Calculate percentage but cap at 150% - excessive exercise isn't necessarily better
-      const percentage = Math.min(vitals.steps.value / stepsGoal, 1.5);
-      
-      // Optimal is 100% of goal, above or below reduces score
-      let stepsScore = 0;
-      if (percentage >= 0.9 && percentage <= 1.1) {
-        // Within 10% of goal (optimal)
-        stepsScore = 25;
-      } else if (percentage > 1.1 && percentage <= 1.5) {
-        // Exceeding goal by 10-50%
-        stepsScore = 20;
-      } else if (percentage > 1.5) {
-        // Exceeding goal by too much
-        stepsScore = 15;
-      } else if (percentage >= 0.7 && percentage < 0.9) {
-        // 70-90% of goal
-        stepsScore = 20;
-      } else if (percentage >= 0.5 && percentage < 0.7) {
-        // 50-70% of goal
-        stepsScore = 15;
-      } else if (percentage >= 0.3 && percentage < 0.5) {
-        // 30-50% of goal
-        stepsScore = 10;
-      } else {
-        // Less than 30% of goal
-        stepsScore = 5;
-      }
-      
-      score += stepsScore;
-      debugScoreInfo.push(`Steps: ${stepsScore}/25 (${vitals.steps.value}/${stepsGoal} steps)`);
-    } else {
-      debugScoreInfo.push(`Steps: missing data - ${JSON.stringify(vitals.steps)}`);
-    }
     
     // Sleep - realistic healthy ranges
     if (vitals.sleep) {
@@ -677,6 +634,37 @@ export default function Index() {
       debugScoreInfo.push(`Temperature: ${tempScore}/25 (${temp}${unit})`);
     } else {
       debugScoreInfo.push(`Temperature: missing data - ${JSON.stringify(vitals.temperature)}`);
+    }
+    
+    // Weight - important health metric
+    if (vitals.weight && 
+        typeof vitals.weight.value === 'number' &&
+        !isNaN(vitals.weight.value)) {
+        
+        scoreComponents++;
+        let weightScore = 0;
+        const weight = vitals.weight.value;
+        
+        // This is a simplified scoring that would ideally consider 
+        // factors like height (BMI), age, gender, etc.
+        if (weight >= 50 && weight <= 100) {
+            // Normal range
+            weightScore = 25;
+        } else if ((weight >= 45 && weight < 50) || (weight > 100 && weight <= 110)) {
+            // Slightly out of range
+            weightScore = 15;
+        } else if ((weight >= 40 && weight < 45) || (weight > 110 && weight <= 120)) {
+            // Moderately out of range
+            weightScore = 5;
+        } else {
+            // Severely out of range
+            weightScore = 0;
+        }
+        
+        score += weightScore;
+        debugScoreInfo.push(`Weight: ${weightScore}/25 (${weight}${vitals.weight.unit})`);
+    } else {
+        debugScoreInfo.push(`Weight: missing data - ${JSON.stringify(vitals.weight)}`);
     }
     
     // Debug the score calculation - remove detailed heart rate logging
@@ -1283,12 +1271,12 @@ export default function Index() {
 const getVitalIcon = (type: VitalType): keyof typeof MaterialCommunityIcons.glyphMap => {
   const icons: Record<VitalType, keyof typeof MaterialCommunityIcons.glyphMap> = {
     heartRate: 'heart-pulse',
-    steps: 'run',
     sleep: 'sleep',
     water: 'water',
     temperature: 'thermometer',
     oxygenLevel: 'lungs',
     bloodPressure: 'blood-bag',
+    weight: 'weight',
   }
   return icons[type]
 }
@@ -1302,6 +1290,7 @@ const getVitalColor = (type: VitalType): string => {
     temperature: '#FF9800',
     oxygenLevel: '#E91E63',
     bloodPressure: '#F44336',
+    weight: '#9C27B0',
   }
   return colors[type] || '#666'
 }

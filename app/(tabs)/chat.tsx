@@ -32,6 +32,7 @@ import {
   deleteDoc,
   writeBatch,
   updateDoc,
+  and,
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { router } from 'expo-router';
@@ -129,8 +130,9 @@ Format your responses using markdown:
 - Use ## for section headers
 - Use **bold** for emphasis
 - Use - for bullet points
-- Use > for important notes or disclaimers`;
-
+- Use > for important notes or disclaimers
+-must respond within 150 tokens and dont ask questions must give a solution`;   
+ 
 const INITIAL_MESSAGE: ChatMessage = {
   id: '1',
   type: 'assistant',
