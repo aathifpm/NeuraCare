@@ -2,6 +2,11 @@
 
 NeuraCare is a federated learning-driven virtual health assistant designed to provide personalized healthcare support while maintaining data privacy. The system leverages natural language processing (NLP) and machine learning within a secure, decentralized framework to deliver health advice, symptom tracking, and medication reminders without compromising sensitive user data.
 
+## 🚀 Latest Release
+
+**Version**: `v1.0.0`  
+📦 [Download APK](https://github.com/aathifpm/NeuraCare/releases/download/V1.0.0/Neuracare.V1.0.0.apk)
+
 ## Features
 
 - **AI-Powered Health Assistant**: Chat with an intelligent virtual assistant trained on medical knowledge
